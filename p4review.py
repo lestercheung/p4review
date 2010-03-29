@@ -75,7 +75,7 @@ import sys, os, string, re, time, smtplib, traceback, logging
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
                     datefmt='%m-%d %H:%M',
-                    filename='p4review.log',
+                    filename='/tmp/p4review.log',
                     filemode='w')
 # define a Handler which writes INFO messages or higher to the sys.stderr
 console = logging.StreamHandler()
@@ -106,7 +106,7 @@ debug = 1
     # is sent at all if <administrator> = None. Setting
     # <debug> to larger values creates more output.
 
-administrator = None 
+administrator = None
     # Set this to the Perforce system administrator's
     # email address. The <administrator> will be notified
     # of problems with the script (e.g. invalid
@@ -117,9 +117,12 @@ administrator = None
 mailhost = 'localhost'
     # The hostname of the machine running your local SMTP server.
 
-os.environ['P4PORT'] = 'perforce:1999'
-os.environ['P4USER'] = 'review_daemon'
+if not 'P4PORT' in os.environ.keys():
+  os.environ['P4PORT'] = 'perforce:1999'
+if not 'P4USER' in os.environ.keys():
+  os.environ['P4USER'] = 'review_daemon'
     # This user must have Perforce review privileges (via "p4 protect")
+    # Environment from shell takes precedence
 
 p4 = 'p4'
     # The path of your p4 executable. You can use
@@ -193,6 +196,10 @@ datefield = 'Date'
 #############           END OF CONFIGURATION VARIABLES           ##########
 #############                                                    ##########
 ###########################################################################
+
+# caching these to speed things up
+protection_table = []
+GROUPS = {}                     # map users to their groups
 
 bcc_admin = bcc_admin and administrator # don't Bcc: None!
 if administrator and reply_to_admin:
@@ -287,8 +294,53 @@ def set_counter(mailport,counter,value,p4debug,p4error):
                        + 'has review privileges\n(use p4 protect)"' \
                        % os.environ['P4USER'])
 
+def host_matches(rule, host):
+    if rule == '*':
+        return True
+    if rule == host:
+        return True
+# FIXME: DNS lookup?
+    return False                # better safe than sorry
+
+def has_access(protection_t, user, path, fromhost='*'):
+    '''
+    FIXME:
+     * exclusive mappings done correctly?
+     * "=access" rights?
+     * we will return true for non-exisiting depot files as long as it statisfy the checks
+     * calling P4 on every invocation is a major time waster - imagine
+       a change with thousands of modified files.
+    '''
+
+    # filter by user, path and host
+    for access, kind, name, hostspec, filespec in protection_t:
+        if kind == 'user' and (name == '*' or name == user) and \
+                host_matches(hostspec, fromhost):
+            if re.match('^' + filespec.replace('\.\.\.', '.+$'), path):
+                return True
+            if re.match('^-' + filespec.replace('\.\.\.', '.+$'), path) and \
+                    access == 'list':
+                # e.g. list user * * -//...
+                return False
+    
+    #  filter by group
+    global GROUPS
+    groups = GROUPS.get(user, {})
+    if groups != {}:
+      for line in os.popen('p4 groups -i %s' % user).readlines():
+          groups.append(line.strip())
+    for access, kind, groupname, host, filespec in protection_t:
+        if kind == 'group' and \
+                (groupname in groups or (groups and groupname == '*')) and \
+                host_matches(hostspec, fromhost):
+            if re.match('^' + filespec.replace('\.\.\.', '.+$'), path):
+                return True
+            if re.match('^-' + filespec.replace('\.\.\.', '.+$'), path):
+                return False
+    return False
 
 def parse_p4_review(command,p4debug,ignore_author=None):
+  users = []
   reviewers_email = []
   reviewers_email_and_fullname = []
 
@@ -308,13 +360,14 @@ def parse_p4_review(command,p4debug,ignore_author=None):
       email= '%s@%s' % (user, maildomain)
 
     if user != ignore_author:
+      users.append(user)
       reviewers_email.append(email)
       reviewers_email_and_fullname.append('"%s" <%s>' % (fullname,email))
 
   if debug>1: 
      print(reviewers_email, reviewers_email_and_fullname)
      p4debug.debug(reviewers_email, reviewers_email_and_fullname)
-  return reviewers_email,reviewers_email_and_fullname
+  return users,reviewers_email,reviewers_email_and_fullname
 
 
 def change_reviewers(change,ignore_author=None):
@@ -324,8 +377,41 @@ def change_reviewers(change,ignore_author=None):
   If ignore_author is given then the given user will not be included
   in the lists.
   '''
-  return parse_p4_review(p4 + ' reviews -c ' + change, p4debug, ignore_author)
+  users, reviewers_email, reviewers_email_and_fullname = \
+      parse_p4_review(p4 + ' reviews -c ' + change, p4debug, ignore_author)
 
+  #print("change_reviewers(): %s %s" % (change, str(users)))
+
+
+  # what files are modified in the change?
+  modified_files = []
+  filespec_regex = re.compile(r'^\.\.\. (\S+)#(.+)')
+  for line in os.popen(p4 + ' describe -s ' + change):
+    if line.startswith('... //'):
+      match = filespec_regex.match(line)
+      if match:
+        filespec, dontcare  = match.groups()
+        modified_files.append(filespec)
+
+  for user, email, emailwithname in zip(users, reviewers_email, reviewers_email_and_fullname):
+    # will send a mail as long as user has permission to one of the modified files
+    access = False
+    for f in modified_files:
+      global protection_table
+      assert(protection_table != [])
+      #print('change_reviewers():' + ' '.join([user, f, str(has_access(protection_table, user, f))]))
+
+      if has_access(protection_table, user, f):
+        access = True
+    if not access:              # remove!
+      idx = users.index(user)
+      users.pop(idx)
+      reviewers_email.pop(idx)
+      reviewers_email_and_fullname.pop(idx)
+
+  #print("change_reviewers(): %s %s" % (change, str(users)))
+  return reviewers_email, reviewers_email_and_fullname
+   
 
 def review_changes(mailport,p4debug,p4error,limit_emails=100):
   '''
@@ -478,9 +564,9 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
       p4error.exception('Unknown user %s found in job %s' % (author,jobname))
 
     if send_to_author:
-      (recipients,recipients_with_fullnames) = job_reviewers(jobname)
+      (users,recipients,recipients_with_fullnames) = job_reviewers(jobname)
     else:
-      (recipients,recipients_with_fullnames) = job_reviewers(jobname,author)
+      (users,recipients,recipients_with_fullnames) = job_reviewers(jobname,author)
 
     if bcc_admin: recipients.append(administrator)
 
@@ -542,6 +628,21 @@ def loop_body(mailhost,p4debug,p4error):
                    server at host %s' % mailhost)
      p4debug.debug('Trying to open connection to SMTP \
 		(mail) server at host %s' % mailhost)
+
+  global protection_table
+  protection_table = []         # should I bother to rebuild the table every time?
+  protect_regex =  re.compile('(\w+) (\w+) (\w+) ([^ ]+) ([^ ]+)'
+                              ) # access, kind, name, host, filespec 
+  for line in os.popen('p4 protects -a').readlines():
+    match = protect_regex.match(line.strip())
+    if match:
+#             access, kind, name, host, filespec = match.groups()
+#             print '\n'.join([access, kind, name, host, filespec])
+      protection_table.append(match.groups())
+  protection_table.reverse()     # protection is evaluated in reverse
+  assert(protection_table != [])
+
+
   try:
     mailport=smtplib.SMTP(mailhost)
   except:
@@ -569,6 +670,32 @@ def loop_body(mailhost,p4debug,p4error):
 
 
 if __name__ == '__main__':
+  from optparse import OptionParser
+  op = OptionParser()
+
+  # FIXME: make use of these options!!
+  op.add_option('-p', '--port', dest='P4PORT', 
+                help='set server port')
+  op.add_option('-u', '--user', dest='P4USER',
+                help='set user')
+  op.add_option('-f', '--force', dest='toeveryone', 
+                help='send alert to everyone, even user has no access to file.')
+  op.add_option('-a', '--admin', dest='admin', default=None,
+                help='administrator email')
+  op.add_option('-m', '--mailhost', dest='mailhost', default='smtp',
+                help='SMTP host')
+  op.add_option('', '--maildomain', dest='maildomain', default=None,
+                help='Mail domain')
+  op.add_option('-d', '--debug', dest='debug', default=True,
+                help='enable debug')
+  options, args = op.parse_args()
+
+  administrator = options.admin
+  mailhost = options.mailhost
+  maildomain = options.maildomain
+  complain_from = options.admin
+  debug = options.debug
+
   if debug: print('Entering main loop.')
   p4debug = logging.getLogger('p4debug')
   p4error = logging.getLogger('p4error')
