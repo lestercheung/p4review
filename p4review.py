@@ -449,7 +449,7 @@ not be necessary, but they are printed here for accuracy.)'\
        print(line[:-1])
        p4debug.debug(line[:-1])
     (change,author,email,fullname) = \
-      re.match( r'^Change (\d+) (\S+) <(\S+)> \(([^\)]+)\)', line).groups()
+      re.match( r'^Change (\d+) (\S+) <(\S+)> \((.+)\)', line).groups()
 
     if maildomain: # for those who don't use "p4 user" email addresses
       email= '%s@%s' % (author, maildomain)
@@ -472,7 +472,7 @@ not be necessary, but they are printed here for accuracy.)'\
         p4debug.debug(' no users interested in this change')
     if not recipients: continue  # no one is interested
 
-    message = 'From: ' + fullname + ' <' + email + '>\n' +\
+    message = 'From: "' + fullname + '" <' + email + '>\n' +\
               'To: ' + ', '.join(recipients_with_fullnames) + '\n' +\
               'Subject: PERFORCE change ' + change + ' for review\n' +\
               replyto_line +\
