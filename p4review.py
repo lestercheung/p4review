@@ -364,7 +364,7 @@ def parse_p4_review(command,p4debug,ignore_author=None):
       reviewers_email.append(email)
       reviewers_email_and_fullname.append('"%s" <%s>' % (fullname,email))
 
-  if debug>1: 
+  if debug>1 and reviewers_email and reviewers_email_and_fullname: 
      print(reviewers_email, reviewers_email_and_fullname)
      p4debug.debug(reviewers_email, reviewers_email_and_fullname)
   return users,reviewers_email,reviewers_email_and_fullname
