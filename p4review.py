@@ -70,23 +70,8 @@
 #       it's not affected by this problem.
 
 
-import sys, os, string, re, time, smtplib, traceback, logging
-
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
-                    datefmt='%m-%d %H:%M',
-                    filename='/tmp/p4review.log',
-                    filemode='w')
-# define a Handler which writes INFO messages or higher to the sys.stderr
-console = logging.StreamHandler()
-console.setLevel(logging.INFO)
-# set a format which is simpler for console use
-formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
-# tell the handler to use this format
-console.setFormatter(formatter)
-# add the handler to the root logger
-logging.getLogger('').addHandler(console)
-
+import sys, os, string, re, time, smtplib, traceback
+import  logging, logging.handlers
 
 ##########################################################################
 #############                                                    #########
@@ -197,9 +182,9 @@ datefield = 'Date'
 #############                                                    ##########
 ###########################################################################
 
-# caching these to speed things up
+# Caching these to speed things up
 protection_table = []
-GROUPS = {}                     # map users to their groups
+GROUPS = {}                     # User to group mappings.
 
 bcc_admin = bcc_admin and administrator # don't Bcc: None!
 if administrator and reply_to_admin:
@@ -207,21 +192,21 @@ if administrator and reply_to_admin:
 else:
   replyto_line=''
 
-
 def complain(mailport,complaint):
   '''
   Send a plaintive message to the human looking after this script if we
   have any difficulties.  If no email address for such a human is given,
   send the complaint to stderr.
   '''
-  complaint = complaint + '\n'
   if administrator:
     mailport.sendmail(complain_from,[administrator],\
-      'Subject: Perforce Review Daemon Problem\n\n' + complaint)
+      'Subject: Perforce Review Daemon Problem\n\n%s\n' %  complaint)
+
   else:
-    sys.stderr.write(complaint)
-    
-    
+    logging.getLogger().exception(complaint)
+
+
+
 def check_length(body):
   '''
   Prevent changelist with descriptions of greater than limit_description
@@ -243,26 +228,22 @@ def check_length(body):
   return body    
 
 
-def mailit(mailport, sender, recipients, message, p4debug, p4error):
+def mailit(mailport, sender, recipients, message, p4log):
   '''
   Try to mail message from sender to list of recipients using SMTP object
   mailport.  complain() if there are any problems.
   '''
-  if debug:
-    if not administrator:
-      print('Debug mode, no mail sent: would have sent mail ' \
-            + 'from %s to %s' % (sender,recipients))
-      p4debug.debug('Debug mode, no mail sent: would have sent mail ' \
-            + 'from %s to %s' % (sender,recipients))
-      return
-    print('Sending mail from %s to %s (normally would have sent to %s)' \
-           % (sender,administrator,recipients))
-    p4debug.debug('Sending mail from %s to %s (normally would have sent to %s)' \
 
-           % (sender,administrator,recipients))
-    message = message + '\nIN DEBUG MODE: would normally have sent to %s' \
-              % recipients
-    recipients =  administrator      # for testing or initial setup
+  if not administrator:
+    p4log.debug('Debug mode, no mail sent: would have sent mail ' \
+                    + 'from %s to %s' % (sender,recipients))
+    return 
+
+  p4log.debug('Sending mail from %s to %s (normally would have sent to %s)' \
+                % (sender,administrator,recipients))
+  message = message + '\nIN DEBUG MODE: would normally have sent to %s' \
+      % recipients
+  recipients =  administrator      # for testing or initial setup
   try:
     failed = mailport.sendmail(sender, recipients, message)
   except:
@@ -274,23 +255,15 @@ def mailit(mailport, sender, recipients, message, p4debug, p4error):
               '\n\nwhile trying to email from\n' \
               + repr(sender) + '\nto ' \
               + repr(recipients) + '\nwith body\n\n' + message)
-    p4error.exception('The following errors occurred:\n\n' +\
-               repr(failed) +\
-              '\n\nwhile trying to email from\n' \
-              + repr(sender) + '\nto ' \
-              + repr(recipients) + '\nwith body\n\n' + message)
 
 
-def set_counter(mailport,counter,value,p4debug,p4error):
-  if debug: 
+def set_counter(mailport,counter,value,p4log):
+  if debug:
      print('setting counter %s to %s' % (counter,repr(value)))
-     p4debug.debug('setting counter %s to %s' % (counter,repr(value)))
+     p4log.debug('setting counter %s to %s' % (counter,repr(value)))
   set_result = os.system('%s counter %s %s' % (p4,counter,value)) 
   if set_result !=0:
     complain(mailport,'Unable to set review counter - check user %s ' \
-                       + 'has review privileges\n(use p4 protect)"' \
-                       % os.environ['P4USER'])
-    p4error.exception('Unable to set review counter - check user %s ' \
                        + 'has review privileges\n(use p4 protect)"' \
                        % os.environ['P4USER'])
 
@@ -339,18 +312,18 @@ def has_access(protection_t, user, path, fromhost='*'):
                 return False
     return False
 
-def parse_p4_review(command,p4debug,ignore_author=None):
+def parse_p4_review(command,p4log,ignore_author=None):
   users = []
   reviewers_email = []
   reviewers_email_and_fullname = []
 
   if debug>1: 
      print('parse_p4_review: %s' % command)
-     p4debug.debug('parse_p4_review: %s' % command)
+     p4log.debug('parse_p4_review: %s' % command)
   for line in os.popen(command,'r').readlines():
     if debug>1: 
        print(line)
-       p4debug.debug(line)
+       p4log.debug(line)
     # sample line: james <james@perforce.com> (James Strickland)
     #              user   email                fullname
     (user,email,fullname) = \
@@ -366,7 +339,7 @@ def parse_p4_review(command,p4debug,ignore_author=None):
 
   if debug>1 and reviewers_email and reviewers_email_and_fullname: 
      print(reviewers_email, reviewers_email_and_fullname)
-     p4debug.debug(reviewers_email, reviewers_email_and_fullname)
+     p4log.debug(reviewers_email, reviewers_email_and_fullname)
   return users,reviewers_email,reviewers_email_and_fullname
 
 
@@ -378,7 +351,7 @@ def change_reviewers(change,ignore_author=None):
   in the lists.
   '''
   users, reviewers_email, reviewers_email_and_fullname = \
-      parse_p4_review(p4 + ' reviews -c ' + change, p4debug, ignore_author)
+      parse_p4_review(p4 + ' reviews -c ' + change, p4log, ignore_author)
 
   #print("change_reviewers(): %s %s" % (change, str(users)))
 
@@ -413,7 +386,7 @@ def change_reviewers(change,ignore_author=None):
   return reviewers_email, reviewers_email_and_fullname
    
 
-def review_changes(mailport,p4debug,p4error,limit_emails=100):
+def review_changes(mailport,p4log,limit_emails=100):
   '''
   For each change which hasn't been reviewed yet send email to users
   interested in reviewing the change.  Update the "review" counter to
@@ -430,7 +403,7 @@ def review_changes(mailport,p4debug,p4error,limit_emails=100):
     current_review=int(os.popen(p4 + ' counter review').read())
     print('Looking for changes to review after change %d and up to %d.' \
            % (current_review, current_change))
-    p4debug.debug('Looking for changes to review after change %d and up to %d.' \
+    p4log.debug('Looking for changes to review after change %d and up to %d.' \
            % (current_review, current_change))
 
     if current_review==0:
@@ -447,7 +420,7 @@ not be necessary, but they are printed here for accuracy.)'\
 
     if debug: 
        print(line[:-1])
-       p4debug.debug(line[:-1])
+       p4log.debug(line[:-1])
     (change,author,email,fullname) = \
       re.match( r'^Change (\d+) (\S+) <(\S+)> \((.+)\)', line).groups()
 
@@ -466,10 +439,10 @@ not be necessary, but they are printed here for accuracy.)'\
       if recipients:
         no_one_interested=0
         print(' users interested in this change: %s' % recipients)
-        p4debug.debug(' users interested in this change: %s' % recipients)
+        p4log.debug(' users interested in this change: %s' % recipients)
       else:
         print(' no users interested in this change')
-        p4debug.debug(' no users interested in this change')
+        p4log.debug(' no users interested in this change')
     if not recipients: continue  # no one is interested
 
     message = 'From: "' + fullname + '" <' + email + '>\n' +\
@@ -479,11 +452,11 @@ not be necessary, but they are printed here for accuracy.)'\
               '\n' +\
               check_length(os.popen(p4 + ' describe -s ' + change,'r').read())
 
-    mailit(mailport, email, recipients, message, p4debug, p4error)
+    mailit(mailport, email, recipients, message, p4log)
     limit_emails = limit_emails - 1
 
     if debug:
-       p4debug.debug('Perforce change %s notification successfully sent to %s' \
+       p4log.debug('Perforce change %s notification successfully sent to %s' \
 	% (change,email))
 
     if limit_emails <= 0:
@@ -493,12 +466,12 @@ not be necessary, but they are printed here for accuracy.)'\
     print('No users were interested in any of the changes above - perhaps \
     no one has set the Reviews: field in their client spec?  (please see \
     p4 help user").')
-    p4debug.debug('No users were interested in any of the changes above - perhaps \
+    p4log.debug('No users were interested in any of the changes above - perhaps \
     no one has set the Reviews: field in their client spec?  (please see \
     p4 help user").')
 
   # if there were change(s) reviewed in the above loop, update the counter
-  if change: set_counter(mailport,'review',change,p4debug,p4error)
+  if change: set_counter(mailport,'review',change,p4log)
 
 
 def job_reviewers(jobname,ignore_author=None):
@@ -512,7 +485,7 @@ def job_reviewers(jobname,ignore_author=None):
            # not the most efficient solution...
 
 
-def review_jobs(mailport,p4debug,p4error,limit_emails=100):
+def review_jobs(mailport,p4log,limit_emails=100):
   '''
   For each job which hasn't been reviewed yet send email to users
   interested in reviewing the job.  Update the "jobreview" counter to
@@ -536,7 +509,7 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
           (%d seconds since 1 Jan 1970 GMT) \
           and up to\n%s (%d seconds since 1 Jan 1970 GMT).' \
           % (start_time_string, start_time, query_time_string, query_time))
-    p4debug.debug('Looking for jobs to review after\n%s \
+    p4log.debug('Looking for jobs to review after\n%s \
           (%d seconds since 1 Jan 1970 GMT) \
           and up to\n%s (%d seconds since 1 Jan 1970 GMT).' \
           % (start_time_string, start_time, query_time_string, query_time))
@@ -548,7 +521,7 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
     #              jobname      date          author
     if debug: 
        print(line[:-1])
-       p4debug.debug(line[:-1])
+       p4log.debug(line[:-1])
 
     (jobname,author) = re.match( r'^(\S+) on \S+ by (\S+)', line).groups()
     match = re.match( r'^\S+\s+<(\S+)>\s+\(([^\)]+)\)', \
@@ -561,7 +534,6 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
       email = administrator
       fullname = "Unknown user: " + author
       complain(mailport,'Unknown user %s found in job %s' % (author,jobname))
-      p4error.exception('Unknown user %s found in job %s' % (author,jobname))
 
     if send_to_author:
       (users,recipients,recipients_with_fullnames) = job_reviewers(jobname)
@@ -574,10 +546,10 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
       if recipients:
         no_one_interested=0
         print(' users interested in this job: %s' % recipients)
-        p4debug.debug(' users interested in this job: %s' % recipients)
+        p4log.debug(' users interested in this job: %s' % recipients)
       else:
         print(' no users interested in this job')
-        p4debug.debug(' no users interested in this job')
+        p4log.debug(' no users interested in this job')
 
     if not recipients: continue  # no one is interested
 
@@ -591,16 +563,14 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
       if line[0] != '#': job_body = job_body + line
     message = message + check_length(job_body)
 
-    mailit(mailport, email, recipients, message, p4debug, p4error)
+    mailit(mailport, email, recipients, message, p4log)
     limit_emails = limit_emails - 1
 
-    if debug: p4debug.debug('Perforce job %s notification successfully sent to %s' \
+    if debug: p4log.debug('Perforce job %s notification successfully sent to %s' \
 	% (jobname, email))
 
     if limit_emails <= 0:
       complain( mailport, 'email limit exceeded in job review \
-                           \n- extra jobs dropped!')
-      p4error.exception('email limit exceeded in job review \
                            \n- extra jobs dropped!')
       break
 
@@ -609,13 +579,13 @@ def review_jobs(mailport,p4debug,p4error,limit_emails=100):
              perhaps no one has set the Reviews: field in their client\
              spec to include the "jobpath", namely "%s".  Please see "p4 \
              help user").' % jobpath)
-      p4debug.debug('No users were interested in any of the jobs above - \
+      p4log.debug('No users were interested in any of the jobs above - \
              perhaps no one has set the Reviews: field in their client\
              spec to include the "jobpath", namely "%s".  Please see "p4 \
              help user").' % jobpath)
-  set_counter(mailport,'jobreview',query_time,p4debug,p4error)
+  set_counter(mailport,'jobreview',query_time,p4log)
 
-def loop_body(mailhost,p4debug,p4error):
+def loop_body(mailhost,p4log):
   # Note: there's a try: wrapped around everything so that the program won't
   # halt.  Unfortunately, as a result you don't get the full traceback.
   # If you're debugging this script, remove the special exception handlers
@@ -626,7 +596,7 @@ def loop_body(mailhost,p4debug,p4error):
   if debug: 
      print('Trying to open connection to SMTP (mail) \
                    server at host %s' % mailhost)
-     p4debug.debug('Trying to open connection to SMTP \
+     p4log.debug('Trying to open connection to SMTP \
 		(mail) server at host %s' % mailhost)
 
   global protection_table
@@ -646,30 +616,58 @@ def loop_body(mailhost,p4debug,p4error):
   try:
     mailport=smtplib.SMTP(mailhost)
   except:
-    sys.stderr.write('Unable to connect to SMTP host "' + mailhost \
-                      + '"!\nWill try again in ' + repr(sleeptime) \
-                      + ' seconds.\n')
-    p4error.exception('Unable to connect to SMTP host "' + mailhost \
+    p4log.exception('Unable to connect to SMTP host "' + mailhost \
                       + '"!\nWill try again in ' + repr(sleeptime) \
                       + ' seconds.\n')
   else:
-    if debug: print('SMTP connection open.')
+    p4log.debug('SMTP connection open.')
     try:
-      if notify_changes: review_changes(mailport,p4debug,p4error,limit_emails)
-      if notify_jobs: review_jobs(mailport,p4debug,p4error,limit_emails)
+      if notify_changes: review_changes(mailport,p4log,limit_emails)
+      if notify_jobs: review_jobs(mailport,p4log,limit_emails)
     except:
       complain(mailport,'Review daemon problem:\n\n%s' % \
-                  ''.join(traceback.format_exception(*sys.exc_info())))
-      p4error.exception('Review daemon problem:\n\n%s' % \
                   ''.join(traceback.format_exception(*sys.exc_info())))
     try:
       mailport.quit()
     except:
-      sys.stderr.write('Error while doing SMTP quit command (ignore).\n')
-      p4error.exception('Error while doing SMTP quit command (ignore).\n')
+      p4log.exception('Error while doing SMTP quit command (ignore).\n')
 
 
 if __name__ == '__main__':
+
+  # Only write INFO  messages or higher to sys.stderr
+  logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+    datefmt='%m-%d %H:%M',
+    )
+  # # filename='p4review.log',
+  # filemode='w'
+
+
+  p4log = logging.getLogger(__name__)
+
+  # Define a Handler which writes all messages to a rotating log file.
+  p4reviewlog = logging.handlers.RotatingFileHandlerr()
+  p4reviewlog.setLevel(logging.INFO)
+  # set a format which is simpler for p4reviewlog use
+  formatter = logging.Formatter('%(levelname)-8s: %(message)s')
+  # tell the handler to use this format
+  p4reviewlog.setFormatter(formatter)
+  # add the handler to the root logger
+  logging.getLogger().addHandler(p4reviewlog)
+
+  logging.getLogger().addHandler(logging.handlers.RotatingFileHandler('p4review.log', 
+                                                                      mode='a+',
+                                                                      maxBytes=2**10, 
+                                                                      backupCount=10))
+  ## Logging to syslog
+  # logging.getLogger().addHandler(logging.SysLogHandler(address=('locahost', 514)))
+
+
+
+
+
   from optparse import OptionParser
   op = OptionParser()
 
@@ -678,33 +676,34 @@ if __name__ == '__main__':
                 help='set server port')
   op.add_option('-u', '--user', dest='P4USER',
                 help='set user')
-  op.add_option('-f', '--force', dest='toeveryone', 
-                help='send alert to everyone, even user has no access to file.')
+  # op.add_option('-A', '--all', dest='mail2everyone', action='store_true',
+  #               help='send alert to everyone, even user has no access to file.')
   op.add_option('-a', '--admin', dest='admin', default=None,
                 help='administrator email')
   op.add_option('-m', '--mailhost', dest='mailhost', default='smtp',
                 help='SMTP host')
   op.add_option('', '--maildomain', dest='maildomain', default=None,
                 help='Mail domain')
-  op.add_option('-d', '--debug', dest='debug', default=True,
-                help='enable debug')
+  op.add_option('-d', '--debug', dest='debug', action='store_true',
+                default=True, help='enable debug')
   options, args = op.parse_args()
-
+  # p4log.debug(options) # , args)
+  
   administrator = options.admin
   mailhost = options.mailhost
   maildomain = options.maildomain
   complain_from = options.admin
   debug = options.debug
 
-  if debug: print('Entering main loop.')
-  p4debug = logging.getLogger('p4debug')
-  p4error = logging.getLogger('p4error')
+  p4log.debug('Entering main loop.')
   while(repeat):
-    loop_body(mailhost,p4debug,p4error)
+    loop_body(mailhost,p4log)
     if debug: 
        print('Sleeping for %d seconds.' % sleeptime)
-       p4debug.debug('Sleeping for %d seconds.' % sleeptime)
+       p4log.debug('Sleeping for %d seconds.' % sleeptime)
     time.sleep(sleeptime)
   else:
-    loop_body(mailhost,p4debug,p4error)
+    loop_body(mailhost,p4log)
+  logging.shutdown()            # gracefully shutdown the logging system.
   if debug: print('Done.')
+
