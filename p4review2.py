@@ -591,15 +591,18 @@ class P4Review(object):
             self.cfg.p4port, jobname,
             u' '.join(self.unicode(job.get('Description').strip(),
                                    self.cfg.p4charset, 'replace').splitlines()))
+
+        info = {}
+        info.update(job)
         if len(subj) > 78:
             subj = subj[:75] + '...'
         subj = subj.replace('\n', ' ')
-        job['subject'] = subj
+        info['subject'] = subj
 
         job_url = ''
         if self.cfg.job_url:
             job_url = self.cfg.job_url.format(jobno=jobname)
-        job['job_url'] = job_url
+        info['job_url'] = job_url
         
         txt_summary, html_summary = [], []
         for key in job.keys():
@@ -618,9 +621,9 @@ class P4Review(object):
         txt_summary = u'\n\n'.join(txt_summary)
         html_summary = u'\n'.join(map(lambda x: self.unicode(x, self.cfg.p4charset), html_summary))
 
-        job['text_summary'] = self.cfg.job_template.format(jobdesc=txt_summary, **job)
-        job['html_summary'] = self.cfg.html_job_template.format(jobdesc=html_summary, **job)
-        return job
+        info['text_summary'] = self.cfg.job_template.format(jobdesc=txt_summary, **info)
+        info['html_summary'] = self.cfg.html_job_template.format(jobdesc=html_summary, **info)
+        return info
         
     def send_one_email_per_change(self):
         log.debug('send_one_email_per_change()')
