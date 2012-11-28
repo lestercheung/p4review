@@ -32,7 +32,7 @@ FEATURES
 
 * can optionally include a P4Web URL.
 
-* use P4Python instead of P4 (the CLI).
+* use P4Python when available and with P4 (the CLI) as fallback.
 
 * option to send a __single__ email per user per invocation instead of
   multiple ones.
@@ -77,17 +77,9 @@ Nice to haves (TODOs)
 
 * run as a standalone daemon.
 
-* work with P4 CLI when P4Python is not available.
-
-    * Embed the command line client in the script and use it if
-      needed.
-
-    * simply use a P4 binary installed by admin
-
 '''
 
 import ConfigParser
-import P4
 import argparse
 import cgi
 import email
@@ -106,9 +98,14 @@ from operator import itemgetter
 from pprint import pprint, pformat
 from textwrap import TextWrapper
 
-
-# log.CRITICAL (50) log.ERROR (40) log.FATAL (50) log.INFO (20) log.DEBUG (10)
-DEBUGLVL = log.INFO
+## DEBUG LEVELS (make it a configurable?)
+# 0 NOTSET
+# 10 DEBUG
+# 20 INFO
+# 30 WARN, WARNING
+# 40 ERROR
+# 50 CRITICAL, FATAL
+DEBUGLVL = log.DEBUG
 
 # Instead of changing these, store your preferences in a config file.
 # See the --sample-config option.
@@ -121,6 +118,7 @@ DEFAULTS = dict(
     opt_in_path    = '',
 
     # Perforce
+    p4bin          = '/usr/local/bin/p4',
     p4port         = os.environ.get('P4PORT', '1666'),
     p4user         = os.environ.get('P4USER', getuser()),
     p4charset      = 'utf8',    # as P4CHARSET and to handle non-unicode server with non-ascii chars...
@@ -136,7 +134,7 @@ DEFAULTS = dict(
     max_email_size = 1024**2,         # Up to ~30MB
     max_emails     = 99,              # start small - people can choose to increase this
     max_length     = 2**12,
-    default_sender = 'review-daemon', # although currently this is not a daemon. ;-)
+    default_sender = 'Review Daemon <review-daemon>', # although currently this is not a daemon. ;-)
     default_domain = 'example.org',
     change_url     = 'http://p4web:1680/{chgno}?ac=10',
     job_url        = 'http://p4web:1680/{jobno}?ac=111',
@@ -306,13 +304,15 @@ class P4Review(object):
         open(cfg.lock_file, 'w').close()
 
         self.cfg = cfg
-        p4 = P4.P4()
+        self.default_name, self.default_email = email.utils.parseaddr(cfg.default_sender)
+        
+        p4 = P4()
         p4.prog = 'P4Review2'
         p4.port = cfg.p4port
         p4.user = cfg.p4user
         p4.connect()
         if 'unicode' in p4.run_info()[0]:
-            p4.charset = self.cfg.p4charset
+            p4.charset = str(self.cfg.p4charset)
         self.p4 = p4            # keep a reference for future use
         db = sqlite3.connect(cfg.dbfile)
         self.db = db
@@ -338,7 +338,6 @@ class P4Review(object):
     def pull_data_from_p4(self):
         p4 = self.p4
         cux = self.db.cursor()
-
 
         if self.cfg.opt_in_path:
             for rv in p4.run_reviews(self.cfg.opt_in_path):
@@ -381,8 +380,8 @@ class P4Review(object):
                     try:
                         cux.execute(sql, (chgno, dumps(self.trim_dict(cl, 'chageType client user time change desc depotFile action rev job'.split()))))
                     except Exception, e:
-                        pprint(e)
-                        pprint(cl)
+                        log.fatal(pformat(e))
+                        log.fatail(pformat(cl))
                         self.bail('kaboom!')
                     jobnames.update(cl.get('job', []))
                     
@@ -647,7 +646,7 @@ class P4Review(object):
             if rv:
                 aname, aemail = rv[0]
 
-            fromaddr        = self.mkemailaddr((author, aname, self.cfg.default_sender))
+            fromaddr        = self.mkemailaddr((author, aname, self.default_email))
             toaddrs         = map(self.mkemailaddr, zip(usrs, unames, uemails))
 
             if html:
@@ -675,7 +674,9 @@ class P4Review(object):
 
             if html:
                 msg = MIMEMultipart('alternative')
-                msg['From'] = self.mkemailaddr((self.cfg.default_sender, None, self.cfg.default_domain))
+                fr = self.mkemailaddr((None, self.default_name, self.default_email))
+                log.info(self.cfg.default_sender)
+                msg['From'] = fr
                 msg['To'] = ', '.join(map(self.mkemailaddr, zip(usrs, unames, uemails)))
                 msg['Subject'] = subj
             else:
@@ -738,7 +739,7 @@ class P4Review(object):
             
             if not text_summaries: return # nothing to do!
 
-            fromaddr = self.mkemailaddr((None, 'Review Daemon', self.cfg.default_sender))
+            fromaddr = self.mkemailaddr((None, self.default_name, self.default_email))
             toaddr = self.mkemailaddr((usr, uname, uemail))
 
             if self.cfg.html_change_template:
@@ -871,8 +872,7 @@ class P4Review(object):
         return 0
 
     ## Class App ends here
-        
-        
+
 def print_cfg(cfg):
     conf = ConfigParser.SafeConfigParser()
     conf.add_section('p4review')
@@ -901,13 +901,69 @@ if __name__ == '__main__':
             format='%(asctime)s %(levelname)-8s %(message)s',
             datefmt='%Y-%m-%d %H:%M',
         )
-    log.debug(cfg)
-    
+
     if cfg.sample_config:
         print ';; See --help for details...'
         print_cfg(cfg)
         sys.exit()
 
+
+    try:
+        from P4 import P4
+    except ImportError, e:
+        log.warn('Using P4 CLI. Considering install P4Python for better performance. '
+                 'See http://www.perforce.com/perforce/doc.current/manuals/p4script/03_python.html')
+        import shlex
+        from subprocess import Popen, PIPE
+        import marshal
+
+        class P4(object):
+            '''Poor mans's implimentation of P4Python using P4
+            CLI... just enough to support p4review2.py.
+
+            '''
+            charset = None
+            user    = cfg.p4user
+            port    = cfg.p4port
+            p4bin   = cfg.p4bin
+
+            def __setattr__(self, name, val):
+                if name in 'port prog client charset user'.split():
+                    object.__setattr__(self, name, val)
+
+            def __getattr__(self, name):
+                if name.startswith('run_'):
+                    p4cmd = name[4:]
+                    def p4run(*args):
+                        cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, p4cmd]
+                        if self.charset:
+                            cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, '-C', self.charset, p4cmd]
+                        if type(args)==tuple or type(args)==list:
+                            for arg in args:
+                                if type(arg) == list:
+                                    cmd.extend(arg)
+                                else:
+                                    cmd.append(arg)
+                        else:
+                            cmd += [args]
+                        cmd = map(str, cmd)
+                        p = Popen(cmd, stdout=PIPE)
+                        rv = []
+                        while 1:
+                            try:
+                                rv.append(marshal.load(p.stdout))
+                            except:
+                                break
+                        return rv
+                    return p4run
+                elif name in 'connect disconnect'.split():
+                    def noop():
+                        pass    # returns None
+                    return noop
+
+            def connected(self):
+                return True
+        
     app = P4Review(cfg)
     rv = 1                      # default exit value
     try:
