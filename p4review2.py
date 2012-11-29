@@ -51,11 +51,13 @@ FEATURES
 
 * able to limit the maximum email message size with a configurable
 
+* SMTP auth and TLS (not SSL) support.
+
 
 Nice to haves (TODOs)
 -----------------------
 
-* handles P4 & SMTP auth (and SSL).
+* handles P4 auth
 
 * include p4web link for diffs
 
@@ -105,7 +107,8 @@ from textwrap import TextWrapper
 # 30 WARN, WARNING
 # 40 ERROR
 # 50 CRITICAL, FATAL
-DEBUGLVL = log.DEBUG
+DEBUGLVL = log.INFO
+CFG_SECTION_NAME = 'p4review'
 
 # Instead of changing these, store your preferences in a config file.
 # See the --sample-config option.
@@ -113,8 +116,8 @@ DEFAULTS = dict(
     # General 
     lock_file      = 'p4review.lock',
     log_file       = '',
-    dbfile         = ':memory:',  # an (temporary) SQLite db used to
-                                  # store review info from Perforce
+    dbfile         = ':memory:', # an (temporary) SQLite db used to
+                                 # store review info from Perforce
     opt_in_path    = '',
 
     # Perforce
@@ -129,10 +132,13 @@ DEFAULTS = dict(
     timeoffset     = 0,
 
     # Email
-    smtp           = 'smtp:25',    
+    smtp_server    = 'smtp:25',
+    smtp_tls       = True,
+    smtp_user      = '',        # optional
+    smtp_passwd    = '',        # optional
     summary_email  = False,
-    max_email_size = 1024**2,         # Up to ~30MB
-    max_emails     = 99,              # start small - people can choose to increase this
+    max_email_size = 1024**2,   # Up to ~30MB
+    max_emails     = 99,        # start small - people can choose to increase this
     max_length     = 2**12,
     default_sender = 'Review Daemon <review-daemon>', # although currently this is not a daemon. ;-)
     default_domain = 'example.org',
@@ -194,31 +200,28 @@ def parse_args():
     args, remaining_argv = confp.parse_known_args()
     
     if args.config_file:
-        cfg = ConfigParser.SafeConfigParser()
-        cfg.read([args.config_file])
-        cfg_dict = dict(map(
-            lambda x: map(
-                lambda y: unicode(y, 'utf8', 'replace'), x),
-            cfg.items('p4review')))
+        cfgp = ConfigParser.SafeConfigParser()
+        cfgp.read([args.config_file])
+        cfg = dict([[unicode(y, 'utf8', 'replace') for y in x] for x in cfgp.items(CFG_SECTION_NAME)])
 
+        for key in cfg.keys():
+            if not cfg[key]:
+                cfg.pop(key)    # remove empty fields
+        
         # now this is annoying - have to convert int(?) and bool types manually...
-        for key in 'sample_config summary_email debug_email precached'.split():
-            if key in defaults:
-                val = defaults.get(key)
-                if not val:
-                    continue
-                if val.upper() in ('FALSE', '0', ):
-                    defaults[key] = False
+        for key in 'sample_config summary_email debug_email precached smtp_tls'.split():
+            if key in cfg:
+                if cfg.get(key).upper() in ('FALSE', '0', ):
+                    cfg[key] = False
                 else:
-                    defaults[key] = True
+                    cfg[key] = True
         for key in 'max_length max_emails max_email_size'.split():
-            if key in defaults:
-                defaults[key] = int(defaults.get(key))
+            if key in cfg:
+                cfg[key] = int(cfg.get(key))
 
         for k in defaults.keys():
-            var = cfg_dict.get(k)
-            if var:
-                defaults[k] = var
+            if k in cfg:
+                defaults[k] = cfg.get(k)
 
     ap = argparse.ArgumentParser(
         description='Perforce review daemon, take 2.',
@@ -274,8 +277,8 @@ def parse_args():
     m.add_argument('--subject-template', metavar="'{}'".format(defaults.get('subject_template')), help='customize subject line in one-email-per-change-mode')
 
     args = ap.parse_args(remaining_argv)
-    if 'cfg' in locals().keys():
-        if len(DEFAULTS.keys()) != len(cfg_dict.keys()) and not args.sample_config:
+    if 'cfgp' in locals().keys(): # we have a config parser
+        if len(DEFAULTS.keys()) != len(cfgp.items(CFG_SECTION_NAME)) and not args.sample_config:
             log.warning('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
             sys.exit(1)
     
@@ -781,7 +784,12 @@ class P4Review(object):
             print msg.as_string()
         else:
             # Note: not re-using connection to avoid timeout on the SMTP server
-            smtp = smtplib.SMTP(*self.cfg.smtp.split(':'))
+            # Note2: SMTP() expects a byte string, not unicode. :-/
+            smtp = smtplib.SMTP(* (str(self.cfg.smtp_server).split(':')) )
+            if self.cfg.smtp_tls:
+                smtp.starttls()
+            if self.cfg.smtp_user and self.cfg.smtp_passwd:
+                smtp.login(self.cfg.smtp_user, self.cfg.smtp_passwd)
             smtp.sendmail(fr, to, msg.as_string())
             smtp.quit()
             
@@ -875,16 +883,15 @@ class P4Review(object):
 
 def print_cfg(cfg):
     conf = ConfigParser.SafeConfigParser()
-    conf.add_section('p4review')
+    conf.add_section(CFG_SECTION_NAME)
     keys = DEFAULTS.keys()
     keys.sort()
     for key in keys:
-        conf.set('p4review', key, str(cfg.__getattribute__(key)))
+        conf.set(CFG_SECTION_NAME, key, str(cfg.__getattribute__(key)))
     conf.write(sys.stdout)
     
 if __name__ == '__main__':
     cfg = parse_args()
-
     # NOTE: need to call log.basicCofnig() before we can use the
     # logger or it will use the default settings!
     if cfg.log_file:
@@ -902,12 +909,14 @@ if __name__ == '__main__':
             datefmt='%Y-%m-%d %H:%M',
         )
 
+    log.debug(cfg)
+    
+
     if cfg.sample_config:
         print ';; See --help for details...'
         print_cfg(cfg)
         sys.exit()
-
-
+    
     try:
         from P4 import P4
     except ImportError, e:
