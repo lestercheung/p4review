@@ -364,7 +364,7 @@ class P4CLI(object):
             cmd += ['-s']
             proc = Popen(cmd, stdout=PIPE)
             out = proc.communicate()[0]
-            if 'error' in marshal.loads(out).keys():
+            if marshal.loads(out).get('code') == 'error':
                 raise Exception('P4CLI exception - not logged in.')
         else:
             proc = Popen(cmd, stdin=PIPE, stdout=PIPE)
@@ -402,8 +402,6 @@ class P4Review(object):
         p4.port = cfg.p4port
         p4.user = cfg.p4user
         p4.connect()
-        if 'unicode' in p4.run_info()[0]:
-            p4.charset = str(self.cfg.p4charset)
 
         logged_in = False
         try:
@@ -416,6 +414,9 @@ class P4Review(object):
             p4.password = str(cfg.p4passwd)
             p4.run_login()
             
+        if 'unicode' in p4.run_info()[0]:
+            p4.charset = str(self.cfg.p4charset)
+        
         self.p4 = p4            # keep a reference for future use
         db = sqlite3.connect(cfg.dbfile)
         self.db = db
@@ -1005,7 +1006,6 @@ if __name__ == '__main__':
 
     log.debug(cfg)
     
-
     if cfg.sample_config:
         print ';; See --help for details...'
         print_cfg(cfg)
@@ -1017,6 +1017,7 @@ if __name__ == '__main__':
         if S_IRGRP&m or S_IWGRP&m or S_IROTH&m or S_IWOTH&m:
             log.fatal('You are storing plain text password(s) in the config file with insecure permission. Fix it!')
             sys.exit(1)
+    
     try:
         from P4 import P4
     except ImportError, e:
