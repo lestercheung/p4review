@@ -88,6 +88,8 @@ import email
 import hashlib
 import logging as log
 import os, sys
+import marshal
+import re
 import smtplib
 import sqlite3
 import traceback
@@ -99,6 +101,7 @@ from getpass import getuser     # works under UNIX & Windows!
 from operator import itemgetter
 from pprint import pprint, pformat
 from textwrap import TextWrapper
+from subprocess import Popen, PIPE
 
 ## DEBUG LEVELS (make it a configurable?)
 # 0 NOTSET
@@ -107,7 +110,7 @@ from textwrap import TextWrapper
 # 30 WARN, WARNING
 # 40 ERROR
 # 50 CRITICAL, FATAL
-DEBUGLVL = log.INFO
+DEBUGLVL = log.DEBUG
 CFG_SECTION_NAME = 'p4review'
 
 # Instead of changing these, store your preferences in a config file.
@@ -125,6 +128,7 @@ DEFAULTS = dict(
     p4port         = os.environ.get('P4PORT', '1666'),
     p4user         = os.environ.get('P4USER', getuser()),
     p4charset      = 'utf8',    # as P4CHARSET and to handle non-unicode server with non-ascii chars...
+    p4passwd       = '',        # completely optional, best to setup ticket-based auth instead.
     review_counter = 'review',
     job_counter    = 'jobreview',
     job_datefield  = 'Date',
@@ -197,11 +201,11 @@ def parse_args():
         add_help=False # Turn off help, so -h works with the 2nd parser below
     )
     confp.add_argument('-c', '--config-file')
-    args, remaining_argv = confp.parse_known_args()
+    args0, remaining_argv = confp.parse_known_args()
     
-    if args.config_file:
+    if args0.config_file:
         cfgp = ConfigParser.SafeConfigParser()
-        cfgp.read([args.config_file])
+        cfgp.read([args0.config_file])
         cfg = dict([[unicode(y, 'utf8', 'replace') for y in x] for x in cfgp.items(CFG_SECTION_NAME)])
 
         for key in cfg.keys():
@@ -278,11 +282,103 @@ def parse_args():
 
     args = ap.parse_args(remaining_argv)
     if 'cfgp' in locals().keys(): # we have a config parser
+        args.config_file = args0.config_file
         if len(DEFAULTS.keys()) != len(cfgp.items(CFG_SECTION_NAME)) and not args.sample_config:
-            log.warning('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
+            log.fatal('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
             sys.exit(1)
     
     return args
+
+class P4CLI(object):
+    '''Poor mans's implimentation of P4Python using P4
+    CLI... just enough to support p4review2.py.
+
+    '''
+    charset = ''
+    array_key_regex = re.compile(r'^(\D*)(\d*)$')
+    
+    def __setattr__(self, name, val):
+        if name in 'port prog client charset user password'.split():
+            object.__setattr__(self, name, val)
+
+    def __getattr__(self, name):
+        if name.startswith('run_'):
+            p4cmd = name[4:]
+
+            def p4runproxy(*args): # stubs for undefined run_*() functions
+                cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, p4cmd]
+                if self.charset:
+                    cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, '-C', self.charset, p4cmd]
+                if type(args)==tuple or type(args)==list:
+                    for arg in args:
+                        if type(arg) == list:
+                            cmd.extend(arg)
+                        else:
+                            cmd.append(arg)
+                else:
+                    cmd += [args]
+                cmd = map(str, cmd)
+                p = Popen(cmd, stdout=PIPE)
+
+                rv = []
+                while 1:
+                    try:
+                        rv.append(marshal.load(p.stdout))
+                    except EOFError:
+                        break
+                    except Exception, e:
+                        log.error('{} {}'.format(type(e), e))
+                        break
+
+                # magic to turn fieldNNN into a list in field
+                for r in rv:
+                    fields_needing_cleanup = set()
+                    for key in r.keys():
+                        k, num = self.array_key_regex.match(key).groups()
+                        if not num:
+                            continue
+                        r[k] = r.get(k, [])
+                        r[k].append((key, r[key]))
+                        fields_needing_cleanup.add(k)
+                    for k in fields_needing_cleanup:
+                        r[k].sort(key=lambda x: x[0])
+                        r[k] = [ val[1] for val in r[k]]
+
+                return rv
+            return p4runproxy
+        elif name in 'connect disconnect'.split():
+            def noop():
+                pass    # returns None
+            return noop
+        else:
+            log.error(name)
+            raise AttributeError
+
+    def identify(self):
+        return 'P4CLI, using {}.'.format(self.p4bin)
+        
+    def connected(self):
+        return True
+
+    def _p4bin(self):
+        cmd = [self.p4bin] + '-G -p {} -u {} '.format(self.port, self.user).split()
+        if self.charset:
+            cmd += ['-C', self.charset]
+        return cmd
+    
+    def run_login(self, *args):
+        cmd = self._p4bin() + ['login']
+        if '-s' in args:
+            cmd += ['-s']
+            proc = Popen(cmd, stdout=PIPE)
+            out = proc.communicate()[0]
+            if 'error' in marshal.loads(out).keys():
+                raise Exception('P4CLI exception - not logged in.')
+        else:
+            proc = Popen(cmd, stdin=PIPE, stdout=PIPE)
+            out = proc.communicate(input=self.password)[0]
+            out = '\n'.join(out.splitlines()[1:]) # Skip the password prompt...
+        return [marshal.loads(out)]
 
 class P4Review(object):
     # textwrapper - indented with 1 tab
@@ -316,6 +412,18 @@ class P4Review(object):
         p4.connect()
         if 'unicode' in p4.run_info()[0]:
             p4.charset = str(self.cfg.p4charset)
+
+        logged_in = False
+        try:
+            rv = p4.run_login('-s')
+            logged_in = True
+        except Exception, e:
+            pass
+        log.debug('logged in: '+ str(logged_in))
+        if not logged_in and cfg.p4passwd:
+            p4.password = str(cfg.p4passwd)
+            p4.run_login()
+            
         self.p4 = p4            # keep a reference for future use
         db = sqlite3.connect(cfg.dbfile)
         self.db = db
@@ -544,7 +652,6 @@ class P4Review(object):
 
         html_info['cldesc'] = cgi.escape(unicode(cl.get('desc').strip(), self.cfg.p4charset, 'replace'))
         
-
         jobsupdated = '(none)'
         if jobs:
             jb_tmpl = u'<li><a style="text-decoration: none;" href="{job_url}">{Job}</a> *{Status}* {Description}</li>'
@@ -678,7 +785,6 @@ class P4Review(object):
             if html:
                 msg = MIMEMultipart('alternative')
                 fr = self.mkemailaddr((None, self.default_name, self.default_email))
-                log.info(self.cfg.default_sender)
                 msg['From'] = fr
                 msg['To'] = ', '.join(map(self.mkemailaddr, zip(usrs, unames, uemails)))
                 msg['Subject'] = subj
@@ -816,10 +922,6 @@ class P4Review(object):
         except Exception, e:
             for x in sys.exc_info():
                 log.fatal(x)
-            # for e in traceback.format_tb(sys.exc_info()[2]):
-            #     log.fatal(e)
-            # traceback.print_exc()
-            # pass
             
         self.db.close()
         if os.path.exists(self.cfg.lock_file):
@@ -916,63 +1018,20 @@ if __name__ == '__main__':
         print ';; See --help for details...'
         print_cfg(cfg)
         sys.exit()
-    
+
+    if cfg.p4passwd or cfg.smtp_passwd:
+        m = os.stat(cfg.config_file).st_mode
+        from stat import *
+        if S_IRGRP&m or S_IWGRP&m or S_IROTH&m or S_IWOTH&m:
+            log.fatal('You are storing plain text password(s) in the config file with insecure permission. Fix it!')
+            sys.exit(1)
     try:
         from P4 import P4
     except ImportError, e:
         log.warn('Using P4 CLI. Considering install P4Python for better performance. '
                  'See http://www.perforce.com/perforce/doc.current/manuals/p4script/03_python.html')
-        import shlex
-        from subprocess import Popen, PIPE
-        import marshal
-
-        class P4(object):
-            '''Poor mans's implimentation of P4Python using P4
-            CLI... just enough to support p4review2.py.
-
-            '''
-            charset = None
-            user    = cfg.p4user
-            port    = cfg.p4port
-            p4bin   = cfg.p4bin
-
-            def __setattr__(self, name, val):
-                if name in 'port prog client charset user'.split():
-                    object.__setattr__(self, name, val)
-
-            def __getattr__(self, name):
-                if name.startswith('run_'):
-                    p4cmd = name[4:]
-                    def p4run(*args):
-                        cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, p4cmd]
-                        if self.charset:
-                            cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, '-C', self.charset, p4cmd]
-                        if type(args)==tuple or type(args)==list:
-                            for arg in args:
-                                if type(arg) == list:
-                                    cmd.extend(arg)
-                                else:
-                                    cmd.append(arg)
-                        else:
-                            cmd += [args]
-                        cmd = map(str, cmd)
-                        p = Popen(cmd, stdout=PIPE)
-                        rv = []
-                        while 1:
-                            try:
-                                rv.append(marshal.load(p.stdout))
-                            except:
-                                break
-                        return rv
-                    return p4run
-                elif name in 'connect disconnect'.split():
-                    def noop():
-                        pass    # returns None
-                    return noop
-
-            def connected(self):
-                return True
-        
+        P4 = P4CLI
+        P4.p4bin = cfg.p4bin    # so all instances of P4 knows where to find the P4 binary...
     app = P4Review(cfg)
     rv = 1                      # default exit value
     try:
