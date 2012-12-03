@@ -53,20 +53,12 @@ FEATURES
 
 * SMTP auth and TLS (not SSL) support.
 
+* handles P4 auth (optional, not recommend!)
 
 Nice to haves (TODOs)
 -----------------------
 
-* handles P4 auth
-
 * include p4web link for diffs
-
-* From Sven: 
-
-   > The need for a new version was born out of the necessity to catch
-   > all errors [done, but need to clean up logging], enable automatic
-   > logging in and re-logging in if the password is provided [todo], a
-   > separate configuration file [done] and better logging [done].
 
 * respect protection table (for older P4D versions).
 
@@ -508,10 +500,10 @@ class P4Review(object):
                     sql = 'INSERT or ignore INTO rvw (usr, chgno) values (?, ?)'
                     cux.execute(sql, (usr, chgno))
 
-        for jobname in jobnames:
-            job = p4.run_job(['-o', jobname])[0]
-            cux.execute('''insert or ignore into job (job, pickle) values (?, ?)''', (jobname, dumps(self.trim_dict(job))))
-                              
+            for jobname in jobnames:
+                job = p4.run_job(['-o', jobname])[0]
+                cux.execute('''insert or ignore into job (job, pickle) values (?, ?)''', (jobname, dumps(self.trim_dict(job))))
+        
         if self.cfg.job_counter:
             log.debug('scraping for job reviews...')
             job_counter = p4.run_counter(self.cfg.job_counter)[0].get('value')
