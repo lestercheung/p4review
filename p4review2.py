@@ -42,7 +42,7 @@ FEATURES
 
 * Reads config from a INI-like file using ConfigParser
 
-* Have command line options that overrides environment varialbes.
+* Have command line options that overrides environment variables.
 
 * Handles unicode-enabled server **and** non-ASCII characters on a
   non-unicode-enabled server.
