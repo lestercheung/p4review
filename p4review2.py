@@ -24,48 +24,54 @@ USAGE
 FEATURES
 ---------
 
-* refuse to run concurrently(!!) with a simple lock file.
+* (!!) Prevent multiple copies running concurrently with a simple lock file.
 
-* logging support built-in.
+* Logging support built-in.
 
-* takes command-line options.
+* Takes command-line options.
 
-* can optionally include a P4Web URL.
+* Configurable subject and email templates.
 
-* use P4Python when available and with P4 (the CLI) as fallback.
+* Can (optionally) include URLs for changelists/jobs. Examples for
+  P4Web included.
 
-* option to send a __single__ email per user per invocation instead of
+* Use P4Python when available and with P4 (the CLI) as fallback.
+
+* Option to send a __single__ email per user per invocation instead of
   multiple ones.
 
-* reads config from a ini-like file using ConfigParser
+* Reads config from a INI-like file using ConfigParser
 
-* have command line options that overrides environment varialbes.
+* Have command line options that overrides environment varialbes.
 
-* handles unicode-enabled server.
+* Handles unicode-enabled server **and** non-ASCII characters on a
+  non-unicode-enabled server.
 
-* option to opt-in (--opt-in-path) reviews globally (for migration from old review daemon)
+* Option to opt-in (--opt-in-path) reviews globally (for migration
+  from old review daemon).
 
-* configurable URLs for changes/jobs/users (for swarm).
+* Configurable URLs for changes/jobs/users (for swarm).
 
-* configurable subject and email templates
-
-* able to limit the maximum email message size with a configurable
+* Able to limit the maximum email message size with a configurable.
 
 * SMTP auth and TLS (not SSL) support.
 
-* handles P4 auth (optional, not recommend!)
+* Handles P4 auth (optional, not recommend!).
+
 
 Nice to haves (TODOs)
 -----------------------
 
-* include p4web link for diffs
+* Include P4Web link for diffs.
 
-* respect protection table (for older P4D versions).
+* Respect protection table (for older P4D versions). See:
+  http://public.perforce.com/guest/lester_cheung/p4review/p4review.py
+  for a previous attempt.
 
-* supports hooks from the changelist description to notify additional
+* Supports hooks from the changelist description to notify additional
   users/email.
 
-* skip review email for change authors [done] and job modifiers
+* Skip review email for change authors [done] and job modifiers
   [todo]. The later is not recorded in the job spec by default so it
   must be a configruable...
 
