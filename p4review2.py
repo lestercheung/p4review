@@ -35,7 +35,7 @@ FEATURES
 * Can (optionally) include URLs for changelists/jobs. Examples for
   P4Web included.
 
-* Use P4Python when available and with P4 (the CLI) as fallback.
+* Use P4Python when available and use P4 (the CLI) as a fallback.
 
 * Option to send a __single__ email per user per invocation instead of
   multiple ones.
