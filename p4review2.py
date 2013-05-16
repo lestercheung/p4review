@@ -108,7 +108,7 @@ from subprocess import Popen, PIPE
 # 30 WARN, WARNING
 # 40 ERROR
 # 50 CRITICAL, FATAL
-DEBUGLVL = log.DEBUG
+DEBUGLVL = log.INFO
 CFG_SECTION_NAME = 'p4review'
 
 # Instead of changing these, store your preferences in a config file.
@@ -127,8 +127,8 @@ DEFAULTS = dict(
     p4user         = os.environ.get('P4USER', getuser()),
     p4charset      = 'utf8',    # as P4CHARSET and to handle non-unicode server with non-ascii chars...
     p4passwd       = '',        # completely optional, best to setup ticket-based auth instead.
-    review_counter = 'review',
-    job_counter    = 'jobreview',
+    review_counter = 'review',  # Perforce counter name used to keep track of last changelist notified.
+    job_counter    = '',        # like review_counter but for jobs. Disabled by default. Set to 'jobreview' to enable.
     job_datefield  = 'Date',
     spec_depot     = 'spec',
     timeoffset     = 0,
@@ -213,7 +213,7 @@ def parse_args():
         # now this is annoying - have to convert int(?) and bool types manually...
         for key in 'sample_config summary_email debug_email precached smtp_tls'.split():
             if key in cfg:
-                if cfg.get(key).upper() in ('FALSE', '0', ):
+                if cfg.get(key).upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
                     cfg[key] = False
                 else:
                     cfg[key] = True
@@ -225,6 +225,12 @@ def parse_args():
             if k in cfg:
                 defaults[k] = cfg.get(k)
 
+        # Allow admins to disable change/job review in the configuration file
+        if defaults.get('review_counter', '').upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
+            defaults['review_counter'] = None
+        if defaults.get('job_counter', '').upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
+            defaults['job_counter'] = None
+        
     ap = argparse.ArgumentParser(
         description='Perforce review daemon, take 2.',
         parents=[confp],        # inherit options
@@ -251,21 +257,20 @@ def parse_args():
     p4.add_argument('-r', '--review-counter', metavar=defaults.get('review_counter'), help='name of review counter')
     p4.add_argument('-j', '--job-counter', metavar=defaults.get('job_counter'), help='name of job counter')
 
-    p4.add_argument('-J', '--job-datefield', help='''A job field used
-                    to determine which jobs users are notified of
-                    changes to. This field needs to appear in your
-                    jobspec as a "date" field with persistence
-                    "always". See "p4 help jobspec" for more
-                    information.
-
-                    ''')
+    p4.add_argument('-J', '--job-datefield', metavar=defaults.get('job_datefield'),
+                    help='''A job field used to determine which jobs
+                    users are notified of changes to. This field needs
+                    to appear in your jobspec as a "date" field with
+                    persistence "always". See "p4 help jobspec" for
+                    more information.''')
     
     p4.add_argument('-s', '--spec-depot', metavar=defaults.get('spec_depot'), help="name of spec depot")
     p4.add_argument('-O', '--timeoffset', type=float, help='time offsfet (in hours) between Perforce server and server running this script')
-    p4.add_argument('-C', '--p4charset', help='used to handle non-unicode server with non-ascii chars')
+    p4.add_argument('-C', '--p4charset', metavar=defaults.get('p4charset'),
+                    help='used to handle non-unicode server with non-ascii chars')
     
     m = ap.add_argument_group('Email')
-    m.add_argument('--smtp', metavar=defaults.get('smtp'), help='SMTP server in host:port format')
+    m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format')
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
     m.add_argument('-d', '--default-domain', metavar=defaults.get('default_domain'), help='default domain to qualify email address without domain')
     m.add_argument('-1', '--summary-email', action='store_true', default=False, help='send one email per user')
@@ -424,13 +429,15 @@ class P4Review(object):
             p4.charset = str(self.cfg.p4charset)
         
         self.p4 = p4            # keep a reference for future use
-        db = sqlite3.connect(cfg.dbfile)
+        db = sqlite3.connect(cfg.dbfile,
+                             detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)
+        sqlite3.register_converter('spec', self.convert_spec)
         self.db = db
 
         if not cfg.precached:
             sqls = '''
-            CREATE TABLE chg (chgno INTEGER PRIMARY KEY, pickle);
-            CREATE TABLE job (job PRIMARY KEY, pickle);
+            CREATE TABLE chg (chgno INTEGER PRIMARY KEY, pickle spec);
+            CREATE TABLE job (job PRIMARY KEY, pickle spec);
             CREATE TABLE usr (usr PRIMARY KEY, name, email);
             CREATE TABLE rvw (chgno INTEGER, usr, UNIQUE(chgno, usr));
             CREATE TABLE jbrvw (job, usr, UNIQUE(job, usr));
@@ -444,6 +451,16 @@ class P4Review(object):
         self.started = datetime.now() # mark the timestamp for jobreview counter
         log.info('App initiated.')
 
+    def convert_spec(self, s):
+        '''Convert a pickled server specificiation to a dictionary with unicode values.'''
+        d = loads(s)
+        rv = {}
+        for k in d:
+            if type(d[k]) == str:
+                rv[k] = unicode(d[k], 'utf8', 'replace')
+            else:
+                rv[k] = d[k]
+        return rv
         
     def pull_data_from_p4(self):
         p4 = self.p4
@@ -465,7 +482,7 @@ class P4Review(object):
                 self.bail(msg.format(self.cfg.review_counter))
 
             
-            log.debug('scraping for change review...')
+            log.info('Scraping for change review...')
             rv = p4.run_review(['-t', self.cfg.review_counter])
             log.debug('{} change(s)'.format(len(rv)))
 
@@ -488,7 +505,8 @@ class P4Review(object):
 
                     sql = u'''insert or ignore into chg (chgno, pickle) values (?,?)'''
                     try:
-                        cux.execute(sql, (chgno, dumps(self.trim_dict(cl, 'chageType client user time change desc depotFile action rev job'.split()))))
+                        cux.execute(sql, (chgno, dumps(
+                            self.trim_dict(cl, 'chageType client user time change desc depotFile action rev job'.split()))))
                     except Exception, e:
                         log.fatal(pformat(e))
                         log.fatail(pformat(cl))
@@ -512,13 +530,14 @@ class P4Review(object):
                 cux.execute('''insert or ignore into job (job, pickle) values (?, ?)''', (jobname, dumps(self.trim_dict(job))))
         
         if self.cfg.job_counter:
-            log.debug('scraping for job reviews...')
+            log.info('Scraping for job reviews...')
             job_counter = p4.run_counter(self.cfg.job_counter)[0].get('value')
             try:
                 dt = datetime.strptime(job_counter, self.dtfmt)
             except Exception, e:
                 if self.cfg.force:
-                    dt = datetime.now() - timedelta(days=1)                    
+                    # Not sending notifications for jobs modified before 7 days ago
+                    dt = datetime.now() - timedelta(days=7) 
                 else:
                     msg = '''Job review counter ({jc}) is unset or invalid ({val}). ''' \
                           '''Either re-run the script with -f option or run "p4 counter {jc} 'YYYY/mm/dd:HH:MM:SS' to set it.'''
@@ -562,8 +581,8 @@ class P4Review(object):
                     
                 
         self.db.commit()
-        log.debug('{} change review(s)'.format(self.db.execute('''select count(*) from rvw''').fetchone()[0]))
-        log.debug('{} job review(s)'.format(self.db.execute('''select count(*) from jbrvw''').fetchone()[0]))
+        log.info('{} change review(s).'.format(self.db.execute('''select count(*) from rvw''').fetchone()[0]))
+        log.info('{} job review(s).'.format(self.db.execute('''select count(*) from jbrvw''').fetchone()[0]))
 
 
     def change_summary(self, chgno):
@@ -571,14 +590,13 @@ class P4Review(object):
         subject line, change summary in text and HTML
 
         '''
+        # log.debug('change_summary({})'.format(chgno))
         rv = self.db.execute('select pickle from chg where chgno = ?', (chgno,)).fetchall()
         assert(len(rv)==1)
-        cl = loads(str(rv[0][0]))
-        clfiles = zip(map(lambda x: unicode(x, self.cfg.p4charset, 'replace'),
-                          cl.get('depotFile', [''])),
-                      cl.get('rev', ['']),
-                      cl.get('action', ['']))
-        cldesc = unicode(cl.get('desc').strip(), self.cfg.p4charset, 'replace')
+        cl = rv[0][0]
+        clfiles = zip( cl.get('depotFile', ['']), cl.get('rev', ['']),
+                       cl.get('action', ['']) )
+        cldesc = cl.get('desc').strip()
 
         # subject line
         subj = cfg.subject_template.format(**dict(
@@ -591,14 +609,12 @@ class P4Review(object):
         cl['subject'] = subj.replace('\n', ' ')
 
         # jobs associated with this change...        
-        jobs = set()
-        if cl.get('job'):
-            for jobname in cl.get('job'):
-                rv = self.db.execute('select pickle from job where job = ?', (jobname,)).fetchall()
-                assert(len(rv)==1)
-                job = rv[0][0]
-                jobs.add(job)
-        jobs = [loads(str(j)) for j in list(jobs)]
+        jobs = []
+        for jobname in cl.get('job', []):
+            if not jobname: continue
+            rv = self.db.execute('select pickle from job where job = ?', (jobname,)).fetchone()
+            if rv:
+                jobs.append(rv[0])
         jobs.sort(key=lambda j: j['Job'], reverse=True)
 
         
@@ -606,6 +622,13 @@ class P4Review(object):
         jobsupdated = '(none)'
         if jobs:
             jb_tmpl = u'{Job} *{Status}* {Description}'
+            ujobs = []
+            for job in jobs:
+                j = dict()
+                for k in job:
+                    j[k] = job[k]
+                ujobs.append(j)
+            jobs = ujobs
             jobsupdated = [self.txtwrpr_indented.fill(jb_tmpl.format(**job).strip()) for job in jobs]
             jobsupdated = '\n\n'.join(jobsupdated)
         
@@ -649,7 +672,7 @@ class P4Review(object):
             else:
                 html_info[key] = info[key]
 
-        html_info['cldesc'] = cgi.escape(unicode(cl.get('desc').strip(), self.cfg.p4charset, 'replace'))
+        html_info['cldesc'] = cgi.escape(cl.get('desc').strip())
         
         jobsupdated = '(none)'
         if jobs:
@@ -692,13 +715,13 @@ class P4Review(object):
         job summary in text and html
 
         '''
-        rv = self.db.execute('select pickle from job where job = ?', (jobname,)).fetchall()
-        assert(len(rv) == 1)
-        job = loads(str(rv[0][0]))
+        rv = self.db.execute('select pickle from job where job = ?', (jobname,)).fetchone()
+        assert(rv)              # should be true unless server has consistancy problems...
+        job = rv[0]
+        # add option "jobreview_subject_template"?
         subj = u'[{} {}] {}'.format(
             self.cfg.p4port, jobname,
-            u' '.join(self.unicode(job.get('Description').strip(),
-                                   self.cfg.p4charset, 'replace').splitlines()))
+            u' '.join(job.get('Description').strip().splitlines()))
 
         info = {}
         info.update(job)
@@ -714,10 +737,9 @@ class P4Review(object):
         
         txt_summary, html_summary = [], []
         for key in job.keys():
-            val = self.unicode(job.get(key)).strip()
+            val = job.get(key).strip()
             if len(val) > self.cfg.max_length:
                 val = val[:self.cfg.max_length] + '...\n(truncated)'
-            key = self.unicode(key)
 
             txt_summary.append('\n'.join([
                 '{}:'.format(key),
@@ -952,10 +974,11 @@ class P4Review(object):
             elif type(val) == type([]):
                 newval = []
                 for i in xrange(len(val)):
+                    # append first, then check if we went over.                    
+                    newval.append(val[i])
                     if sum(map(lambda x: len(x), newval)) > maxlen:
                         newval.append('... (truncated)')
                         break
-                    newval.append(val[i])
                 val = newval
             newdic[k] = val
         return newdic
