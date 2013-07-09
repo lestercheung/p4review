@@ -131,11 +131,11 @@ DEFAULTS = dict(
     job_counter    = '',        # like review_counter but for jobs. Disabled by default. Set to 'jobreview' to enable.
     job_datefield  = 'Date',
     spec_depot     = 'spec',
-    timeoffset     = 0.0,       # in hours
+    timeoffset     = 0,
 
     # Email
     smtp_server    = 'smtp:25',
-    smtp_ssl       = 'none/ssl/tls',
+    smtp_tls       = True,
     smtp_user      = '',        # optional
     smtp_passwd    = '',        # optional
     summary_email  = False,
@@ -211,7 +211,7 @@ def parse_args():
                 cfg.pop(key)    # remove empty fields
         
         # now this is annoying - have to convert int(?) and bool types manually...
-        for key in 'sample_config summary_email debug_email precached'.split():
+        for key in 'sample_config summary_email debug_email precached smtp_tls'.split():
             if key in cfg:
                 if cfg.get(key).upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
                     cfg[key] = False
@@ -270,7 +270,7 @@ def parse_args():
                     help='used to handle non-unicode server with non-ascii chars')
     
     m = ap.add_argument_group('Email')
-    m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format. See smtp_ssl in config for SSL options.')
+    m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format')
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
     m.add_argument('-d', '--default-domain', metavar=defaults.get('default_domain'), help='default domain to qualify email address without domain')
     m.add_argument('-1', '--summary-email', action='store_true', default=False, help='send one email per user')
@@ -286,11 +286,10 @@ def parse_args():
     args = ap.parse_args(remaining_argv)
     if 'cfgp' in locals().keys(): # we have a config parser
         args.config_file = args0.config_file
-        if set(DEFAULTS.keys()) != set(cfgp.options(CFG_SECTION_NAME)) and not args.sample_config:
+        if len(DEFAULTS.keys()) != len(cfgp.items(CFG_SECTION_NAME)) and not args.sample_config:
             log.fatal('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
             sys.exit(1)
     
-    args.smtp_ssl = args.smtp_ssl.upper()
     return args
 
 class P4CLI(object):
@@ -384,136 +383,6 @@ class P4CLI(object):
             out = '\n'.join(out.splitlines()[1:]) # Skip the password prompt...
         return [marshal.loads(out)]
 
-class UnixDaemon(object):
-	"""
-	A generic daemon class.
-	
-	Usage: subclass the Daemon class and override the run() method
-
-        Source:
-        http://www.jejik.com/files/examples/daemon.py
-        
-        Reference:
-        http://www.jejik.com/articles/2007/02/a_simple_unix_linux_daemon_in_python/
-	"""
-	def __init__(self, pidfile, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
-		self.stdin = stdin
-		self.stdout = stdout
-		self.stderr = stderr
-		self.pidfile = pidfile
-	
-	def daemonize(self):
-		"""
-		do the UNIX double-fork magic, see Stevens' "Advanced 
-		Programming in the UNIX Environment" for details (ISBN 0201563177)
-		http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
-		"""
-		try: 
-			pid = os.fork() 
-			if pid > 0:
-				# exit first parent
-				sys.exit(0) 
-		except OSError, e: 
-			sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
-			sys.exit(1)
-	
-		# decouple from parent environment
-		os.chdir("/") 
-		os.setsid() 
-		os.umask(0) 
-	
-		# do second fork
-		try: 
-			pid = os.fork() 
-			if pid > 0:
-				# exit from second parent
-				sys.exit(0) 
-		except OSError, e: 
-			sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
-			sys.exit(1) 
-	
-		# redirect standard file descriptors
-		sys.stdout.flush()
-		sys.stderr.flush()
-		si = file(self.stdin, 'r')
-		so = file(self.stdout, 'a+')
-		se = file(self.stderr, 'a+', 0)
-		os.dup2(si.fileno(), sys.stdin.fileno())
-		os.dup2(so.fileno(), sys.stdout.fileno())
-		os.dup2(se.fileno(), sys.stderr.fileno())
-	
-		# write pidfile
-		atexit.register(self.delpid)
-		pid = str(os.getpid())
-		file(self.pidfile,'w+').write("%s\n" % pid)
-	
-	def delpid(self):
-		os.remove(self.pidfile)
-
-	def start(self):
-		"""
-		Start the daemon
-		"""
-		# Check for a pidfile to see if the daemon already runs
-		try:
-			pf = file(self.pidfile,'r')
-			pid = int(pf.read().strip())
-			pf.close()
-		except IOError:
-			pid = None
-	
-		if pid:
-			message = "pidfile %s already exist. Daemon already running?\n"
-			sys.stderr.write(message % self.pidfile)
-			sys.exit(1)
-		
-		# Start the daemon
-		self.daemonize()
-		self.run()
-
-	def stop(self):
-		"""
-		Stop the daemon
-		"""
-		# Get the pid from the pidfile
-		try:
-			pf = file(self.pidfile,'r')
-			pid = int(pf.read().strip())
-			pf.close()
-		except IOError:
-			pid = None
-	
-		if not pid:
-			message = "pidfile %s does not exist. Daemon not running?\n"
-			sys.stderr.write(message % self.pidfile)
-			return # not an error in a restart
-
-		# Try killing the daemon process	
-		try:
-			while 1:
-				os.kill(pid, SIGTERM)
-				time.sleep(0.1)
-		except OSError, err:
-			err = str(err)
-			if err.find("No such process") > 0:
-				if os.path.exists(self.pidfile):
-					os.remove(self.pidfile)
-			else:
-				print str(err)
-				sys.exit(1)
-
-	def restart(self):
-		"""
-		Restart the daemon
-		"""
-		self.stop()
-		self.start()
-
-	def run(self):
-		"""
-		You should override this method when you subclass Daemon. It will be called after the process has been
-		daemonized by start() or restart().
-		"""    
 class P4Review(object):
     # textwrapper - indented with 1 tab
     txtwrpr_indented = TextWrapper(initial_indent='\n\t', subsequent_indent='\t')
@@ -738,7 +607,7 @@ class P4Review(object):
         if len(subj) > 78: # RFC2822
             subj = subj[:75] + '...'
         cl['subject'] = subj.replace('\n', ' ')
-        
+
         # jobs associated with this change...        
         jobs = []
         for jobname in cl.get('job', []):
@@ -747,6 +616,7 @@ class P4Review(object):
             if rv:
                 jobs.append(rv[0])
         jobs.sort(key=lambda j: j['Job'], reverse=True)
+
         
         # Text summary
         jobsupdated = '(none)'
@@ -1042,12 +912,9 @@ class P4Review(object):
         else:
             # Note: not re-using connection to avoid timeout on the SMTP server
             # Note2: SMTP() expects a byte string, not unicode. :-/
-            if self.cfg.smtp_ssl == 'SSL':
-                smtp = smtplib.SMTP_SSL(* (str(self.cfg.smtp_server).split(':')) )
-            else:
-                smtp = smtplib.SMTP(* (str(self.cfg.smtp_server).split(':')) )
-                if self.cfg.smtp_ssl == 'TLS':
-                    smtp.starttls()
+            smtp = smtplib.SMTP(* (str(self.cfg.smtp_server).split(':')) )
+            if self.cfg.smtp_tls:
+                smtp.starttls()
             if self.cfg.smtp_user and self.cfg.smtp_passwd:
                 smtp.login(self.cfg.smtp_user, self.cfg.smtp_passwd)
             smtp.sendmail(fr, to, msg.as_string())
