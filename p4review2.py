@@ -131,11 +131,11 @@ DEFAULTS = dict(
     job_counter    = '',        # like review_counter but for jobs. Disabled by default. Set to 'jobreview' to enable.
     job_datefield  = 'Date',
     spec_depot     = 'spec',
-    timeoffset     = 0,
+    timeoffset     = 0.0,       # in hours
 
     # Email
     smtp_server    = 'smtp:25',
-    smtp_tls       = True,
+    smtp_ssl       = 'none/ssl/tls',
     smtp_user      = '',        # optional
     smtp_passwd    = '',        # optional
     summary_email  = False,
@@ -211,7 +211,7 @@ def parse_args():
                 cfg.pop(key)    # remove empty fields
         
         # now this is annoying - have to convert int(?) and bool types manually...
-        for key in 'sample_config summary_email debug_email precached smtp_tls'.split():
+        for key in 'sample_config summary_email debug_email precached'.split():
             if key in cfg:
                 if cfg.get(key).upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
                     cfg[key] = False
@@ -270,7 +270,7 @@ def parse_args():
                     help='used to handle non-unicode server with non-ascii chars')
     
     m = ap.add_argument_group('Email')
-    m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format')
+    m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format. See smtp_ssl in config for SSL options.')
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
     m.add_argument('-d', '--default-domain', metavar=defaults.get('default_domain'), help='default domain to qualify email address without domain')
     m.add_argument('-1', '--summary-email', action='store_true', default=False, help='send one email per user')
@@ -286,10 +286,11 @@ def parse_args():
     args = ap.parse_args(remaining_argv)
     if 'cfgp' in locals().keys(): # we have a config parser
         args.config_file = args0.config_file
-        if len(DEFAULTS.keys()) != len(cfgp.items(CFG_SECTION_NAME)) and not args.sample_config:
+        if set(DEFAULTS.keys()) != set(cfgp.options(CFG_SECTION_NAME)) and not args.sample_config:
             log.fatal('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
             sys.exit(1)
     
+    args.smtp_ssl = args.smtp_ssl.upper()
     return args
 
 class P4CLI(object):
@@ -607,7 +608,7 @@ class P4Review(object):
         if len(subj) > 78: # RFC2822
             subj = subj[:75] + '...'
         cl['subject'] = subj.replace('\n', ' ')
-
+        
         # jobs associated with this change...        
         jobs = []
         for jobname in cl.get('job', []):
@@ -616,7 +617,6 @@ class P4Review(object):
             if rv:
                 jobs.append(rv[0])
         jobs.sort(key=lambda j: j['Job'], reverse=True)
-
         
         # Text summary
         jobsupdated = '(none)'
@@ -912,9 +912,12 @@ class P4Review(object):
         else:
             # Note: not re-using connection to avoid timeout on the SMTP server
             # Note2: SMTP() expects a byte string, not unicode. :-/
-            smtp = smtplib.SMTP(* (str(self.cfg.smtp_server).split(':')) )
-            if self.cfg.smtp_tls:
-                smtp.starttls()
+            if self.cfg.smtp_ssl == 'SSL':
+                smtp = smtplib.SMTP_SSL(* (str(self.cfg.smtp_server).split(':')) )
+            else:
+                smtp = smtplib.SMTP(* (str(self.cfg.smtp_server).split(':')) )
+                if self.cfg.smtp_ssl == 'TLS':
+                    smtp.starttls()
             if self.cfg.smtp_user and self.cfg.smtp_passwd:
                 smtp.login(self.cfg.smtp_user, self.cfg.smtp_passwd)
             smtp.sendmail(fr, to, msg.as_string())
