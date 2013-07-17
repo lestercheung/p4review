@@ -75,31 +75,38 @@ Nice to haves (TODOs)
   [todo]. The later is not recorded in the job spec by default so it
   must be a configruable...
 
-* run as a standalone daemon.
+* run as a standalone daemon (UNIX and Windows). See this recipe for
+  an implementation on Windows:
+
+  http://code.activestate.com/recipes/576451-how-to-create-a-windows-service-in-python/
 
 '''
 
 import ConfigParser
 import argparse
+import atexit
 import cgi
 import email
 import hashlib
 import logging as log
-import os, sys
 import marshal
+import os, sys
 import re
 import smtplib
 import sqlite3
+import time
 import traceback
+
+from cPickle import loads, dumps
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from cPickle import loads, dumps
 from getpass import getuser     # works under UNIX & Windows!
 from operator import itemgetter
 from pprint import pprint, pformat
-from textwrap import TextWrapper
+from signal import SIGTERM 
 from subprocess import Popen, PIPE
+from textwrap import TextWrapper
 
 ## DEBUG LEVELS (make it a configurable?)
 # 0 NOTSET
@@ -115,12 +122,13 @@ CFG_SECTION_NAME = 'p4review'
 # See the --sample-config option.
 DEFAULTS = dict(
     # General 
-    lock_file      = 'p4review.lock',
-    log_file       = '',
+    log_file       = '',        # optional, but recommended
+    pid_file       = os.path.join(os.path.realpath('.'), 'p4review2.pid'),
     dbfile         = ':memory:', # an (temporary) SQLite db used to
                                  # store review info from Perforce
     opt_in_path    = '',
-
+    daemon         = None,
+    poll_interval  = 300,
     # Perforce
     p4bin          = '/usr/local/bin/p4',
     p4port         = os.environ.get('P4PORT', '1666'),
@@ -217,9 +225,9 @@ def parse_args():
                     cfg[key] = False
                 else:
                     cfg[key] = True
-        for key in 'max_length max_emails max_email_size'.split():
+        for key in 'max_length max_emails max_email_size poll_interval'.split():
             if key in cfg:
-                cfg[key] = int(cfg.get(key))
+                cfg[key] = float(cfg.get(key))
 
         for k in defaults.keys():
             if k in cfg:
@@ -240,18 +248,20 @@ def parse_args():
 
     ap.add_argument('--sample-config', action='store_true', default=False, help='output sample config with defaults')
     ap.add_argument('-L', '--log-file', help='log file (optional)')
-    ap.add_argument('--lock-file', metavar=defaults.get('lock_file'),
-                    help='lock file to prevent running this script concurrently')
 
-    ap.add_argument('-D', '--dbfile', metavar=defaults.get('dbfile'), help='name of a temp SQLite3 DB file')
     ap.add_argument('-f', '--force', action='store_true', default=False,
                     help='continue even lock or output files exists')
-    ap.add_argument('-o', '--opt-in-path', # metavar=defaults.get('opt_in_path'),
-                    help='''depot path to include in the "Review" field of user spec to opt-in review emails''')
-    ap.add_argument('--precached', action='store_true', default=False,
-                    help='data already in dbfile, not fetching from Perforce (for debug)')
 
-    p4 = ap.add_argument_group('Perforce')
+    ap.add_argument('--daemon', help='start/stop/restart')
+    ap.add_argument('--pid-file', help='stores the pid of the running p4review2 process')
+    ap.add_argument('--daemon-poll-delay', type=float, help='seconds between each poll')
+    
+    debug = ap.add_argument_group('debug')
+    debug.add_argument('-D', '--dbfile', metavar=defaults.get('dbfile'), help='name of a temp SQLite3 DB file')
+    debug.add_argument('--precached', action='store_true', default=False,
+                       help='data already in dbfile, not fetching from Perforce')
+
+    p4 = ap.add_argument_group('perforce')
     p4.add_argument('-p', '--p4port', type=str, metavar=defaults.get('p4port'), help='Perforce port')
     p4.add_argument('-u', '--p4user', type=str, metavar=defaults.get('p4user'), help='Perforce review user')
     p4.add_argument('-r', '--review-counter', metavar=defaults.get('review_counter'), help='name of review counter')
@@ -268,8 +278,10 @@ def parse_args():
     p4.add_argument('-O', '--timeoffset', type=float, help='time offsfet (in hours) between Perforce server and server running this script')
     p4.add_argument('-C', '--p4charset', metavar=defaults.get('p4charset'),
                     help='used to handle non-unicode server with non-ascii chars')
+    p4.add_argument('-o', '--opt-in-path', # metavar=defaults.get('opt_in_path'),
+                    help='''depot path to include in the "Review" field of user spec to opt-in review emails''')
     
-    m = ap.add_argument_group('Email')
+    m = ap.add_argument_group('email')
     m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format. See smtp_ssl in config for SSL options.')
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
     m.add_argument('-d', '--default-domain', metavar=defaults.get('default_domain'), help='default domain to qualify email address without domain')
@@ -384,6 +396,152 @@ class P4CLI(object):
             out = '\n'.join(out.splitlines()[1:]) # Skip the password prompt...
         return [marshal.loads(out)]
 
+
+class UnixDaemon(object):
+    """
+    A generic daemon class.
+    
+    Usage: subclass the Daemon class and override the run() method
+    
+    Source:
+    http://www.jejik.com/files/examples/daemon.py
+    
+    Reference:
+    http://www.jejik.com/articles/2007/02/a_simple_unix_linux_daemon_in_python/
+    """
+    def __init__(self, pidfile, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+        self.stdin = stdin
+        self.stdout = stdout
+        self.stderr = stderr
+        self.pidfile = pidfile
+
+    def daemonize(self):
+        """
+        Do the UNIX double-fork magic, see Stevens' "Advanced 
+        Programming in the UNIX Environment" for details (ISBN 0201563177)
+        http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
+        """
+        try: 
+             pid = os.fork()
+             if pid > 0:
+                 # exit first parent
+                 # sys.stderr.write('forked %d.\n' % pid)
+                 sys.exit(0)
+        except OSError, e: 
+            sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
+            sys.exit(1)
+            
+        # decouple from parent environment
+        os.chdir("/") 
+        os.setsid() 
+        os.umask(0) 
+
+        # do second fork
+        try: 
+            pid = os.fork() 
+            if pid > 0:
+                # exit from second parent
+                sys.exit(0) 
+        except OSError, e: 
+            sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
+            sys.exit(1) 
+
+        # redirect standard file descriptors
+        sys.stdout.flush()
+        sys.stderr.flush()
+        si = file(self.stdin, 'r')
+        so = file(self.stdout, 'a+')
+        se = file(self.stderr, 'a+', 0)
+        os.dup2(si.fileno(), sys.stdin.fileno())
+        os.dup2(so.fileno(), sys.stdout.fileno())
+        os.dup2(se.fileno(), sys.stderr.fileno())
+
+        # write pidfile
+        atexit.register(self.delpid)
+        pid = str(os.getpid())
+        file(self.pidfile,'w+').write("%s\n" % pid)
+
+    def delpid(self):
+        os.remove(self.pidfile)
+
+    def start(self):
+         """
+         Start the daemon
+         """
+         # Check for a pidfile to see if the daemon already runs
+         try:
+             pf = file(self.pidfile,'r')
+             pid = int(pf.read().strip())
+             pf.close()
+         except IOError:
+             pid = None
+
+         if pid:
+             message = "pidfile %s already exist. Daemon already running?\n"
+             sys.stderr.write(message % self.pidfile)
+             sys.exit(1)
+
+         # Start the daemon
+         self.daemonize()
+         self.run()
+
+    def stop(self):
+         """
+         Stop the daemon
+         """
+         # Get the pid from the pidfile
+         try:
+             pf = file(self.pidfile,'r')
+             pid = int(pf.read().strip())
+             pf.close()
+         except IOError:
+             pid = None
+
+         if not pid:
+             message = "pidfile %s does not exist. Daemon not running?\n"
+             sys.stderr.write(message % self.pidfile)
+             return # not an error in a restart
+
+         # Try killing the daemon process	
+         try:
+             while 1:
+                 os.kill(pid, SIGTERM)
+                 time.sleep(0.1)
+         except OSError, err:
+             err = str(err)
+             if err.find("No such process") > 0:
+                 if os.path.exists(self.pidfile):
+                     os.remove(self.pidfile)
+             else:
+                 print str(err)
+                 sys.exit(1)
+                 
+    def restart(self):
+         """
+         Restart the daemon
+         """
+         self.stop()
+         self.start()
+         
+    def run(self):
+         """
+         You should override this method when you subclass Daemon. It will be called after the process has been
+         daemonized by start() or restart().
+         """
+         pass
+
+class P4ReviewDaemon(UnixDaemon):
+    def __init__(self, cfg, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+        super(P4ReviewDaemon, self).__init__(cfg.pid_file, stdin=stdin, stdout=stdout, stderr=stderr)
+        
+    def run(self):
+        '''Run P4Review in a loop with a delay'''
+        while 1:
+            p4review = P4Review(cfg)
+            p4review.run()
+            time.sleep(cfg.poll_interval)
+
+        
 class P4Review(object):
     # textwrapper - indented with 1 tab
     txtwrpr_indented = TextWrapper(initial_indent='\n\t', subsequent_indent='\t')
@@ -394,18 +552,31 @@ class P4Review(object):
     mail_sent  = 0     # keep track of number of mails sent
 
     def __init__(self, cfg):
-        if cfg.force and os.path.exists(cfg.lock_file):
-            os.unlink(cfg.lock_file)
-
-        if cfg.force and not cfg.precached and os.path.exists(cfg.dbfile):
-            os.unlink(cfg.dbfile)
-                        
-        if os.path.exists(cfg.lock_file):
-            log.error('Lock file ({}) exists! Bailing...'.format(cfg.lock_file))
-            sys.exit(1)
+        if cfg.daemon:
+            if os.path.exists(cfg.pid_file):
+                pid = None
+                try:
+                    pid = int(open(cfg.pid_file).read().strip())
+                except:
+                    log.error('{} exists but does not contain a valid pid. Bailing...'.format(cfg.pid_file))
+                if pid != os.getpid():
+                    log.error('Another p4review2 process (pid {}) is running! Bailing...'.format(pid))
+                    sys.exit(1)
+        else:                   # one-shot-mode
+            if cfg.force and os.path.exists(cfg.pid_file):
+                log.info('Removing {} on request (-f)'.format(cfg.pid_file))
+                os.unlink(cfg.pid_file)
+                
+            if cfg.force and not cfg.precached and os.path.exists(cfg.dbfile):
+                log.info('Removing {} on request (-f)'.format(cfg.dbfile))
+                os.unlink(cfg.dbfile)
+                
+            if os.path.exists(cfg.pid_file):
+                log.error('Lock file ({}) exists! Bailing...'.format(cfg.pid_file))
+                sys.exit(1)
+            with open(cfg.pid_file, 'w') as fd:
+                fd.write('{}\n'.format(os.getpid()))
             
-        open(cfg.lock_file, 'w').close()
-
         self.cfg = cfg
         self.default_name, self.default_email = email.utils.parseaddr(cfg.default_sender)
         
@@ -414,7 +585,7 @@ class P4Review(object):
         p4.port = cfg.p4port
         p4.user = cfg.p4user
         p4.connect()
-
+        
         logged_in = False
         try:
             rv = p4.run_login('-s')
@@ -450,7 +621,7 @@ class P4Review(object):
             db.commit()
 
         self.started = datetime.now() # mark the timestamp for jobreview counter
-        log.info('App initiated.')
+        log.info('App (pid={}) initiated.'.format(os.getpid()))
 
     def convert_spec(self, s):
         '''Convert a pickled server specificiation to a dictionary with unicode values.'''
@@ -948,8 +1119,8 @@ class P4Review(object):
                 log.fatal(x)
             
         self.db.close()
-        if os.path.exists(self.cfg.lock_file):
-            os.unlink(self.cfg.lock_file)
+        if not self.cfg.daemon and os.path.exists(self.cfg.pid_file):
+            os.unlink(self.cfg.pid_file)
     
     def bail(self, msg):
         log.fatal(msg)
@@ -1006,7 +1177,7 @@ class P4Review(object):
         log.info('Started {}, finished {}, took {}.'.format(dt0, datetime.now(), datetime.now()-dt0))
         return 0
 
-    ## Class App ends here
+    ## Class P4Review ends here
 
 def print_cfg(cfg):
     conf = ConfigParser.SafeConfigParser()
@@ -1020,7 +1191,7 @@ def print_cfg(cfg):
 if __name__ == '__main__':
     cfg = parse_args()
     # NOTE: need to call log.basicCofnig() before we can use the
-    # logger or it will use the default settings!
+    # logger or it will use the default settings with level=INFO!
     if cfg.log_file:
         log.basicConfig(
             filename=cfg.log_file,
@@ -1057,15 +1228,21 @@ if __name__ == '__main__':
                  'See http://www.perforce.com/perforce/doc.current/manuals/p4script/03_python.html')
         P4 = P4CLI
         P4.p4bin = cfg.p4bin    # so all instances of P4 knows where to find the P4 binary...
-    app = P4Review(cfg)
     rv = 1                      # default exit value
-    try:
-        rv = app.run()
-    except Exception, e:
-        typ, val, tb = sys.exc_info()
-        log.fatal(typ)
-        log.fatal(val)
-        for e in traceback.format_tb(tb):
-            log.fatal(e)
-        app.cleanup()
-    sys.exit(rv)
+    if cfg.daemon:
+        log.info('Starting P4Review2 as a daemon...')
+        app = P4ReviewDaemon(cfg)
+        log.debug(cfg.daemon)
+        getattr(app, cfg.daemon)() # run start/stop/restart
+    else:
+        app = P4Review(cfg)
+        try:
+            rv = app.run()
+        except Exception, e:
+            typ, val, tb = sys.exc_info()
+            log.fatal(typ)
+            log.fatal(val)
+            for e in traceback.format_tb(tb):
+                log.fatal(e)
+            app.cleanup()
+        sys.exit(rv)
