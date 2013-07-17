@@ -127,7 +127,7 @@ DEFAULTS = dict(
     dbfile         = ':memory:', # an (temporary) SQLite db used to
                                  # store review info from Perforce
     opt_in_path    = '',
-    daemon         = None,
+    daemon         = '',
     poll_interval  = 300,
     # Perforce
     p4bin          = '/usr/local/bin/p4',
@@ -639,7 +639,11 @@ class P4Review(object):
         cux = self.db.cursor()
 
         if self.cfg.opt_in_path:
-            for rv in p4.run_reviews(self.cfg.opt_in_path):
+            reviewers = p4.run_reviews(self.cfg.opt_in_path)
+            if not reviewers:
+                log.debug('No one is subscribed to {}.'.format(self.cfg.opt_in_path))
+                return          # return early if no one is subscribed to notification
+            for rv in reviewers:
                 self.subscribed[rv['user']] = True
                 
         if self.cfg.review_counter:
@@ -1230,7 +1234,7 @@ if __name__ == '__main__':
         P4.p4bin = cfg.p4bin    # so all instances of P4 knows where to find the P4 binary...
     rv = 1                      # default exit value
     if cfg.daemon:
-        log.info('Starting P4Review2 as a daemon...')
+        log.info('{}ing P4Review2 in daemon mode...'.format(cfg.daemon.title()))
         app = P4ReviewDaemon(cfg)
         log.debug(cfg.daemon)
         getattr(app, cfg.daemon)() # run start/stop/restart
