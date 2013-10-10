@@ -717,7 +717,7 @@ class P4Review(object):
                 else:
                     msg = '''Job review counter ({jc}) is unset or invalid ({val}). ''' \
                           '''Either re-run the script with -f option or run "p4 counter {jc} 'YYYY/mm/dd:HH:MM:SS' to set it.'''
-                    self.bail(msg.format(jc=self.cfg.review_counter, val=job_counter))
+                    self.bail(msg.format(jc=self.cfg.job_counter, val=job_counter))
                 
             args = '{dfield}>{yr}/{mo}/{day}:{hr}:{min}:{sec}'.format(dfield=self.cfg.job_datefield,
                                                                       yr=dt.year,
