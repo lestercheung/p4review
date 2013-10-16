@@ -752,7 +752,7 @@ class P4Review(object):
                 jobname = job.get('Job')
                 
                 specs = [
-                    '//depot/jobs', # this is what we use in the original review daemon
+                    # '//depot/jobs', # this is what we use in the original review daemon, uncomment as needed (see job000032)
                     '//{}/jobs'.format(self.cfg.spec_depot),
                     '//{}/job/{}*'.format(self.cfg.spec_depot, jobname), # wildcard needed for suffixes
                 ]
