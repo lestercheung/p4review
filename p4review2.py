@@ -80,6 +80,18 @@ Nice to haves (TODOs)
 
   http://code.activestate.com/recipes/576451-how-to-create-a-windows-service-in-python/
 
+
+DISCLAIMER
+-----------
+
+User contributed content on the Perforce Public Depot is not supported
+by Perforce, although it may be supported by its author. This applies
+to all contributions even those submitted by Perforce employees.
+
+If you have any comments or need any help with the content of this
+particular folder, please contact lcheung@perforce.com, and I will try
+to help.
+
 '''
 
 import ConfigParser
@@ -242,7 +254,7 @@ def parse_args():
     ap = argparse.ArgumentParser(
         description='Perforce review daemon, take 2.',
         parents=[confp],        # inherit options
-        epilog='''Please send questions and comments to lcheung@perforce.com. Share and enjoy!''')
+        epilog='''Please send questions and comments to support@perforce.com. Share and enjoy!''')
 
     ap.set_defaults(**defaults)
 
@@ -342,7 +354,7 @@ class P4CLI(object):
                         rv.append(marshal.load(p.stdout))
                     except EOFError:
                         break
-                    except Exception, e:
+                    except Exception as e:
                         log.error('{} {}'.format(type(e), e))
                         break
 
@@ -427,7 +439,7 @@ class UnixDaemon(object):
                  # exit first parent
                  # sys.stderr.write('forked %d.\n' % pid)
                  sys.exit(0)
-        except OSError, e: 
+        except OSError as e: 
             sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
             sys.exit(1)
             
@@ -442,7 +454,7 @@ class UnixDaemon(object):
             if pid > 0:
                 # exit from second parent
                 sys.exit(0) 
-        except OSError, e: 
+        except OSError as e: 
             sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
             sys.exit(1) 
 
@@ -507,7 +519,7 @@ class UnixDaemon(object):
              while 1:
                  os.kill(pid, SIGTERM)
                  time.sleep(0.1)
-         except OSError, err:
+         except OSError as err:
              err = str(err)
              if err.find("No such process") > 0:
                  if os.path.exists(self.pidfile):
@@ -541,7 +553,6 @@ class P4ReviewDaemon(UnixDaemon):
             p4review.run()
             time.sleep(cfg.poll_interval)
 
-        
 class P4Review(object):
     # textwrapper - indented with 1 tab
     txtwrpr_indented = TextWrapper(initial_indent='\n\t', subsequent_indent='\t')
@@ -559,6 +570,7 @@ class P4Review(object):
                     pid = int(open(cfg.pid_file).read().strip())
                 except:
                     log.error('{} exists but does not contain a valid pid. Bailing...'.format(cfg.pid_file))
+                    sys.exit(1)
                 if pid != os.getpid():
                     log.error('Another p4review2 process (pid {}) is running! Bailing...'.format(pid))
                     sys.exit(1)
@@ -597,7 +609,7 @@ class P4Review(object):
             p4.password = str(cfg.p4passwd)
             p4.run_login()
             
-        if 'unicode' in p4.run_info()[0]:
+        if p4.run_info()[0].get('unicode') == 'enabled':
             p4.charset = str(self.cfg.p4charset)
         
         self.p4 = p4            # keep a reference for future use
@@ -623,13 +635,20 @@ class P4Review(object):
         self.started = datetime.now() # mark the timestamp for jobreview counter
         log.info('App (pid={}) initiated.'.format(os.getpid()))
 
+    def to_unicode(self, s):
+        if type(s) != str:
+            return s
+        return unicode(s, self.cfg.p4charset, 'replace')
+
     def convert_spec(self, s):
         '''Convert a pickled server specificiation to a dictionary with unicode values.'''
         d = loads(s)
         rv = {}
         for k in d:
             if type(d[k]) == str:
-                rv[k] = unicode(d[k], 'utf8', 'replace')
+                rv[k] = self.to_unicode(d[k])
+            elif type(d[k]) == list:
+                rv[k] = map(self.to_unicode, d[k])
             else:
                 rv[k] = d[k]
         return rv
@@ -809,7 +828,11 @@ class P4Review(object):
         
         clfiles_txt = '(none)'
         if clfiles:
-            clfiles_txt = u'\n'.join(map(lambda x: u'... {}#{} {}'.format(*x), clfiles))
+            try:
+                clfiles_txt = u'\n'.join(map(lambda x: u'... {}#{} {}'.format(*x), clfiles))
+            except Exception as e:
+                log.error(e)
+                log.error(pformat(clfiles))
         
         info = dict(
             chgno=chgno,
@@ -859,14 +882,14 @@ class P4Review(object):
         clfiles_html = [
             self.cfg.html_files_template.format(
                 change_url=info['change_url'],
-                fhash=hashlib.md5(dfile).hexdigest(),
+                fhash=hashlib.md5(dfile.encode('utf8')).hexdigest(),
                 dfile=cgi.escape(dfile),
                 drev=drev,
                 action=action
             )
             for dfile, drev, action in clfiles
         ]
-        html_info['clfiles'] = '\n'.join(clfiles_html)
+        html_info['clfiles'] = u'\n'.join(clfiles_html)
         html_summary = self.cfg.html_change_template.format(**html_info)
 
         if len(txt_summary) + len(html_summary) > self.cfg.max_email_size:
@@ -1211,6 +1234,12 @@ if __name__ == '__main__':
             datefmt='%Y-%m-%d %H:%M',
         )
 
+    log.debug('Running with Python version {}.{}.{} {} {}'.format(sys.version_info.major,
+                                                                 sys.version_info.minor,
+                                                                 sys.version_info.micro,
+                                                                 sys.version_info.releaselevel,
+                                                                 sys.version_info.serial
+                                                             ))
     log.debug(cfg)
     
     if cfg.sample_config:
