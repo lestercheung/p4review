@@ -675,7 +675,7 @@ class P4Review(object):
             except:
                 msg = '''Review counter ({}) is invalid. Run "p4 counter" to correct it.'''
                 self.bail(msg.format(self.cfg.review_counter))
-
+            log.info('Review counter ({}): {}'.format(self.cfg.review_counter, review_counter))
             
             log.info('Scraping for change review...')
             rv = p4.run_review(['-t', self.cfg.review_counter])
@@ -737,6 +737,7 @@ class P4Review(object):
                     msg = '''Job review counter ({jc}) is unset or invalid ({val}). ''' \
                           '''Either re-run the script with -f option or run "p4 counter {jc} 'YYYY/mm/dd:HH:MM:SS' to set it.'''
                     self.bail(msg.format(jc=self.cfg.job_counter, val=job_counter))
+            log.info('Job counter ({}): {}'.format(self.cfg.job_counter, job_counter))
                 
             args = '{dfield}>{yr}/{mo}/{day}:{hr}:{min}:{sec}'.format(dfield=self.cfg.job_datefield,
                                                                       yr=dt.year,
