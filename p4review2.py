@@ -127,7 +127,7 @@ from textwrap import TextWrapper
 # 30 WARN, WARNING
 # 40 ERROR
 # 50 CRITICAL, FATAL
-DEBUGLVL = log.INFO
+DEBUGLVL = log.DEBUG
 CFG_SECTION_NAME = 'p4review'
 
 # Instead of changing these, store your preferences in a config file.
@@ -525,7 +525,7 @@ class UnixDaemon(object):
                  if os.path.exists(self.pidfile):
                      os.remove(self.pidfile)
              else:
-                 print str(err)
+                 print(str(err))
                  sys.exit(1)
                  
     def restart(self):
@@ -989,7 +989,7 @@ class P4Review(object):
             msg['Reply-To'] = self.mkemailaddr((author, aname, aemail))
             msg['To']       = ', '.join(toaddrs)
             msg['Subject']  = subj
-            self.sendmail(fromaddr, ','.join(toaddrs), msg)
+            self.sendmail(fromaddr, toaddrs, msg)
 
         def email_job_review(rvw):
             jobname, usrs, unames, uemails = rvw
@@ -1013,7 +1013,7 @@ class P4Review(object):
             msg.attach(MIMEText(text, 'plain', 'utf8'))
             msg.attach(MIMEText(self.html_templ.format(body=html), 'html', 'utf8'))
             self.sendmail(msg['From'],
-                          ','.join(map(lambda x: '<{}>'.format(x), uemails)), msg)
+                          map(lambda x: '<{}>'.format(x), uemails), msg)
 
         # change reviews
         sql = '''SELECT chgno, group_concat(usr.usr, ?), group_concat(usr.name, ?), group_concat(usr.email, ?)
@@ -1107,7 +1107,9 @@ class P4Review(object):
 
     def sendmail(self, fr, to, msg):
         if self.cfg.debug_email:
-            print msg.as_string()
+            print('ENVELOP FROM:', fr)
+            print('ENVELOP TO', to)
+            print(msg.as_string())
         else:
             # Note: not re-using connection to avoid timeout on the SMTP server
             # Note2: SMTP() expects a byte string, not unicode. :-/
@@ -1244,7 +1246,7 @@ if __name__ == '__main__':
     log.debug(cfg)
     
     if cfg.sample_config:
-        print ';; See --help for details...'
+        print(';; See --help for details...')
         print_cfg(cfg)
         sys.exit()
 
