@@ -127,7 +127,7 @@ from textwrap import TextWrapper
 # 30 WARN, WARNING
 # 40 ERROR
 # 50 CRITICAL, FATAL
-DEBUGLVL = log.DEBUG
+DEBUGLVL = log.INFO
 CFG_SECTION_NAME = 'p4review'
 
 # Instead of changing these, store your preferences in a config file.
