@@ -1,0 +1,46 @@
+# in mediawiki syntax :(
+
+= FEATURES HIGHLIGHT =
+
+* Authenticates against SMTP and Perforce servers with TLS/SSL support.
+
+* Unicode support - even for non-ACSII characters in non-unicode enabled server if you use a single encoding.
+
+* Configurable email templates which an be hooked with [P4Web](http://www.perforce.com/product/components/perforce-clients?qt-perforce_graphical_tools=1#qt-perforce_graphical_tools) and [Swarm](http://www.perforce.com/product/components/swarm).
+
+* Option to send summary email per user per invocation instead of one for each change.
+
+* Put limits on the maximum message size and number of emails that get sent.
+
+* Guards to prevent running multiple instances of the script by mistake.
+
+* Built-in logging and extensive command-line options to facilitate debug and testing.
+
+* Use P4Python when available for efficiency and fallback to the Perforce command line client gracefully.
+
+* Option for users to opt-in (--opt-in-path) reviews from P4Review2 for smooth migration from other review notification systems.
+
+= Usage =
+
+# Create an sample configuration: <br>''python p4review2.py --sample-config > p4review2.conf''
+# The file is in INI-like format. Edit the file to suit your needs. In particular, check settings for the following (check ''python p4review2.py -h'' for a list of all the current options):
+## p4port
+## p4user
+## p4charset
+## review_counter
+## job_counter
+## change_url
+## job_url
+## user_url
+# Test the configuration with:<br>''python p4review2.py -c p4review2.conf -P''
+# When ready, create a crontab (Linux/UNIX)/scheduled task (Windows) to run the above command without the -P option.
+# Configuration can be overwritten on the command line via options. See ''python p4review2.py -h'' for the complete list.
+
+
+= Feedback/Contact =
+
+I can be contacted via one of the following:
+
+* Twitter: [https://twitter.com/p4lester| P4Lester]
+* [http://forums.perforce.com/index.php?/topic/2306-p4review2| Perforce Forum]
+* Email: lcheung [at] perforce.com

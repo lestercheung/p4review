@@ -1,0 +1,6 @@
+This directory contains the original Perforce review "daemon" and a
+more serious rewrite named P4Review2. Targeted for Python 2.7 and
+using either P4Python or the command line client.
+
+See p4review2.readme.txt for more information.
+
