@@ -212,6 +212,10 @@ Affected files:
 </dl>''',
 )
 
+def true_or_false(x):
+    if x in 'FALSE OFF DISABLED DISABLE 0'.split():
+        return False
+    return True
 
 def parse_args():
     import copy
@@ -230,23 +234,20 @@ def parse_args():
         for key in cfg.keys():
             if not cfg[key]:
                 cfg.pop(key)    # remove empty fields
-        
+
         # now this is annoying - have to convert int(?) and bool types manually...
-        for key in 'sample_config summary_email debug_email precached'.split():
-            if key in cfg:
-                if cfg.get(key).upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
-                    cfg[key] = False
-                else:
-                    cfg[key] = True
+        for key in 'sample_config summary_email debug_email precached skip_author'.split():
+            cfg[key] = true_or_false(cfg.get(key))
+            
         for key in 'max_length max_emails max_email_size poll_interval'.split():
             if key in cfg:
                 cfg[key] = float(cfg.get(key))
 
-        for k in defaults.keys():
+        for k in defaults:
             if k in cfg:
                 defaults[k] = cfg.get(k)
 
-        # Allow admins to disable change/job review in the configuration file
+        # Allow admins to disable change/job review in the configuration file by setting the strings below
         if defaults.get('review_counter', '').upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
             defaults['review_counter'] = None
         if defaults.get('job_counter', '').upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
@@ -299,7 +300,7 @@ def parse_args():
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
     m.add_argument('-d', '--default-domain', metavar=defaults.get('default_domain'), help='default domain to qualify email address without domain')
     m.add_argument('-1', '--summary-email', action='store_true', default=False, help='send one email per user')
-    m.add_argument('--skip-author', type=bool, metavar=defaults.get('skip_author'), help='whether to send email to changelist author')
+    m.add_argument('--skip-author', type=true_or_false, metavar=defaults.get('skip_author'), help='whether to send email to changelist author')
     m.add_argument('-l', '--max-length', type=int, metavar=defaults.get('max_length'), help='limit length of data in diffent places')
     m.add_argument('-m', '--max-emails', type=int, metavar=defaults.get('max_emails'), help='maximum number of emails to be sent')
     m.add_argument('-M', '--max-email-size', type=int, metavar=defaults.get('max_email_size'), help='maximum size of email messages (in bytes)')
@@ -1255,8 +1256,6 @@ if __name__ == '__main__':
                                                                  sys.version_info.releaselevel,
                                                                  sys.version_info.serial
                                                              ))
-    log.debug(cfg)
-    
     if cfg.sample_config:
         print(';; See --help for details...')
         print_cfg(cfg)
