@@ -89,7 +89,7 @@ by Perforce, although it may be supported by its author. This applies
 to all contributions even those submitted by Perforce employees.
 
 If you have any comments or need any help with the content of this
-particular folder, please contact lcheung@perforce.com, and I will try
+particular folder, please contact support@perforce.com, and I will try
 to help.
 
 '''
@@ -120,7 +120,7 @@ from signal import SIGTERM
 from subprocess import Popen, PIPE
 from textwrap import TextWrapper
 
-## DEBUG LEVELS (make it a configurable?)
+## FIXME: DEBUG LEVELS (make it a configurable?)
 # 0 NOTSET
 # 10 DEBUG
 # 20 INFO
@@ -159,10 +159,11 @@ DEFAULTS = dict(
     smtp_user      = '',        # optional
     smtp_passwd    = '',        # optional
     summary_email  = False,
+    skip_author    = True,
     max_email_size = 1024**2,   # Up to ~30MB
     max_emails     = 99,        # start small - people can choose to increase this
     max_length     = 2**12,
-    default_sender = 'Review Daemon <review-daemon>', # although currently this is not a daemon. ;-)
+    default_sender = 'Perforce Review Daemon <perforce-review-daemon>', # Now we can claim to be a daemon! without guilt!
     default_domain = 'example.org',
     change_url     = 'http://p4web:1680/{chgno}?ac=10',
     job_url        = 'http://p4web:1680/{jobno}?ac=111',
@@ -298,6 +299,7 @@ def parse_args():
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
     m.add_argument('-d', '--default-domain', metavar=defaults.get('default_domain'), help='default domain to qualify email address without domain')
     m.add_argument('-1', '--summary-email', action='store_true', default=False, help='send one email per user')
+    m.add_argument('--skip-author', type=bool, metavar=defaults.get('skip_author'), help='whether to send email to changelist author')
     m.add_argument('-l', '--max-length', type=int, metavar=defaults.get('max_length'), help='limit length of data in diffent places')
     m.add_argument('-m', '--max-emails', type=int, metavar=defaults.get('max_emails'), help='maximum number of emails to be sent')
     m.add_argument('-M', '--max-email-size', type=int, metavar=defaults.get('max_email_size'), help='maximum size of email messages (in bytes)')
@@ -976,8 +978,15 @@ class P4Review(object):
             if rv:
                 aname, aemail = rv[0]
 
-            fromaddr        = self.mkemailaddr((author, aname, self.default_email))
-            toaddrs         = map(self.mkemailaddr, zip(usrs, unames, uemails))
+            fromaddr = self.mkemailaddr((None, self.default_name, self.default_email))
+
+            if self.cfg.skip_author and author in usrs:
+                log.info('removing {} from {}'.format(author), usrs)
+                idx = usrs.index(author)
+                usrs.remove(author)
+                unames.remove(unames[idx])
+                uemails.remove(uemails[idx])
+            toaddrs  = map(self.mkemailaddr, zip(usrs, unames, uemails))
 
             if html:
                 msg             = MIMEMultipart('alternative')
@@ -1083,6 +1092,7 @@ class P4Review(object):
             msg['To'] = toaddr
             self.sendmail(fromaddr, ['<{}>'.format(uemail)], msg)
 
+        # FIXME: We are including changelists made by the subscriber here
         sql = u'''SELECT usr.usr, usr.name, usr.email, chgnos, jobs
         FROM rvws JOIN jbrvws ON rvws.usr=jbrvws.usr
         LEFT JOIN usr ON rvws.usr = usr.usr;'''
@@ -1101,6 +1111,8 @@ class P4Review(object):
         login, name, addr = args
         if not name:
             name = login
+        if not addr:       # the email field is required so this should not
+            addr = login   # happen
         if '@' not in addr:
             addr = '{}@{}'.format(addr, self.cfg.default_domain)
         return email.utils.formataddr((name, addr))
