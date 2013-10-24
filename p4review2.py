@@ -982,7 +982,7 @@ class P4Review(object):
             fromaddr = self.mkemailaddr((None, self.default_name, self.default_email))
 
             if self.cfg.skip_author and author in usrs:
-                log.info('removing {} from {}'.format(author), usrs)
+                log.info('removing {} from {}'.format(author, usrs))
                 idx = usrs.index(author)
                 usrs.remove(author)
                 unames.remove(unames[idx])
