@@ -987,6 +987,8 @@ class P4Review(object):
                 usrs.remove(author)
                 unames.remove(unames[idx])
                 uemails.remove(uemails[idx])
+            if not usrs:        # if the list is empty, return
+                return          
             toaddrs  = map(self.mkemailaddr, zip(usrs, unames, uemails))
 
             if html:
