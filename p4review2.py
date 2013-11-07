@@ -707,7 +707,7 @@ class P4Review(object):
                             self.trim_dict(cl, 'chageType client user time change desc depotFile action rev job'.split()))))
                     except Exception, e:
                         log.fatal(pformat(e))
-                        log.fatail(pformat(cl))
+                        log.fatal(pformat(cl))
                         self.bail('kaboom!')
                     jobnames.update(cl.get('job', []))
                     
