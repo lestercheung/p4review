@@ -638,20 +638,15 @@ class P4Review(object):
         self.started = datetime.now() # mark the timestamp for jobreview counter
         log.info('App (pid={}) initiated.'.format(os.getpid()))
 
-    def to_unicode(self, s):
-        if type(s) != str:
-            return s
-        return unicode(s, self.cfg.p4charset, 'replace')
-
     def convert_spec(self, s):
         '''Convert a pickled server specificiation to a dictionary with unicode values.'''
         d = loads(s)
         rv = {}
         for k in d:
             if type(d[k]) == str:
-                rv[k] = self.to_unicode(d[k])
+                rv[k] = self.unicode(d[k])
             elif type(d[k]) == list:
-                rv[k] = map(self.to_unicode, d[k])
+                rv[k] = map(self.unicode, d[k])
             else:
                 rv[k] = d[k]
         return rv
@@ -688,9 +683,9 @@ class P4Review(object):
 
             for rvw in rv:
                 chgno  = rvw.get('change')
-                p4user = unicode(rvw.get('user'), self.cfg.p4charset, 'replace')
-                name   = unicode(rvw.get('name'), self.cfg.p4charset, 'replace')
-                email  = unicode(rvw.get('email'), self.cfg.p4charset, 'replace')
+                p4user = self.unicode(rvw.get('user'))
+                name   = self.unicode(rvw.get('name'))
+                email  = self.unicode(rvw.get('email'))
 
                 sql = '''INSERT OR IGNORE INTO usr (usr, name, email) values (?, ?, ?)'''
                 cux.execute(sql, (p4user, name, email))
@@ -712,12 +707,12 @@ class P4Review(object):
                     jobnames.update(cl.get('job', []))
                     
                 for rvwer in rvwers:
-                    usr   = unicode(rvwer.get('user') , self.cfg.p4charset, 'replace')
+                    usr   = self.unicode(rvwer.get('user'))
                     if self.cfg.opt_in_path: # and who doesn't want to be spammed?
                         if usr not in self.subscribed.keys():
                             continue
-                    name  = unicode(rvwer.get('name') , self.cfg.p4charset, 'replace')
-                    email = unicode(rvwer.get('email'), self.cfg.p4charset, 'replace')
+                    name  = self.unicode(rvwer.get('name'))
+                    email = self.unicode(rvwer.get('email'))
                     sql = 'INSERT OR IGNORE INTO usr (usr, name, email) values (?,?,?)'
                     cux.execute(sql, (usr, name, email))
                     sql = 'INSERT or ignore INTO rvw (usr, chgno) values (?, ?)'
