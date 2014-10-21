@@ -240,8 +240,9 @@ def parse_args():
             cfg[key] = true_or_false(cfg.get(key))
             
         for key in 'max_length max_emails max_email_size poll_interval'.split():
-            if key in cfg:
-                cfg[key] = float(cfg.get(key))
+            if key in cfg: 
+                cfg[key] = int(cfg.get(key)) # NOTE: float values cannot be used in list 
+                                             #       slicing notations!
 
         for k in defaults:
             if k in cfg:
