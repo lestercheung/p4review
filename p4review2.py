@@ -116,7 +116,7 @@ from email.mime.text import MIMEText
 from getpass import getuser     # works under UNIX & Windows!
 from operator import itemgetter
 from pprint import pprint, pformat
-from signal import SIGTERM 
+from signal import SIGTERM
 from subprocess import Popen, PIPE
 from textwrap import TextWrapper
 
@@ -133,7 +133,7 @@ CFG_SECTION_NAME = 'p4review'
 # Instead of changing these, store your preferences in a config file.
 # See the --sample-config option.
 DEFAULTS = dict(
-    # General 
+    # General
     log_file       = '',        # optional, but recommended
     pid_file       = os.path.join(os.path.realpath('.'), 'p4review2.pid'),
     dbfile         = ':memory:', # an (temporary) SQLite db used to
@@ -225,7 +225,7 @@ def parse_args():
     )
     confp.add_argument('-c', '--config-file')
     args0, remaining_argv = confp.parse_known_args()
-    
+
     if args0.config_file:
         cfgp = ConfigParser.SafeConfigParser()
         cfgp.read([args0.config_file])
@@ -238,10 +238,10 @@ def parse_args():
         # now this is annoying - have to convert int(?) and bool types manually...
         for key in 'sample_config summary_email debug_email precached skip_author'.split():
             cfg[key] = true_or_false(cfg.get(key))
-            
+
         for key in 'max_length max_emails max_email_size poll_interval'.split():
-            if key in cfg: 
-                cfg[key] = int(cfg.get(key)) # NOTE: float values cannot be used in list 
+            if key in cfg:
+                cfg[key] = int(cfg.get(key)) # NOTE: float values cannot be used in list
                                              #       slicing notations!
 
         for k in defaults:
@@ -253,7 +253,7 @@ def parse_args():
             defaults['review_counter'] = None
         if defaults.get('job_counter', '').upper() in ('FALSE', '0', 'NONE', 'DISABLED', 'DISABLE', 'OFF'):
             defaults['job_counter'] = None
-        
+
     ap = argparse.ArgumentParser(
         description='Perforce review daemon, take 2.',
         parents=[confp],        # inherit options
@@ -270,7 +270,7 @@ def parse_args():
     ap.add_argument('--daemon', help='start/stop/restart')
     ap.add_argument('--pid-file', help='stores the pid of the running p4review2 process')
     ap.add_argument('--daemon-poll-delay', type=float, help='seconds between each poll')
-    
+
     debug = ap.add_argument_group('debug')
     debug.add_argument('-D', '--dbfile', metavar=defaults.get('dbfile'), help='name of a temp SQLite3 DB file')
     debug.add_argument('--precached', action='store_true', default=False,
@@ -288,14 +288,14 @@ def parse_args():
                     to appear in your jobspec as a "date" field with
                     persistence "always". See "p4 help jobspec" for
                     more information.''')
-    
+
     p4.add_argument('-s', '--spec-depot', metavar=defaults.get('spec_depot'), help="name of spec depot")
     p4.add_argument('-O', '--timeoffset', type=float, help='time offsfet (in hours) between Perforce server and server running this script')
     p4.add_argument('-C', '--p4charset', metavar=defaults.get('p4charset'),
                     help='used to handle non-unicode server with non-ascii chars')
     p4.add_argument('-o', '--opt-in-path', # metavar=defaults.get('opt_in_path'),
                     help='''depot path to include in the "Review" field of user spec to opt-in review emails''')
-    
+
     m = ap.add_argument_group('email')
     m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format. See smtp_ssl in config for SSL options.')
     m.add_argument('-S', '--default-sender', metavar=defaults.get('default_sender'), help='default sender email')
@@ -317,7 +317,7 @@ def parse_args():
         if set(DEFAULTS.keys()) != set(cfgp.options(CFG_SECTION_NAME)) and not args.sample_config:
             log.fatal('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
             sys.exit(1)
-    
+
     args.smtp_ssl = args.smtp_ssl.upper()
     return args
 
@@ -328,7 +328,7 @@ class P4CLI(object):
     '''
     charset = ''
     array_key_regex = re.compile(r'^(\D*)(\d*)$')
-    
+
     def __setattr__(self, name, val):
         if name in 'port prog client charset user password'.split():
             object.__setattr__(self, name, val)
@@ -388,7 +388,7 @@ class P4CLI(object):
 
     def identify(self):
         return 'P4CLI, using {}.'.format(self.p4bin)
-        
+
     def connected(self):
         return True
 
@@ -397,7 +397,7 @@ class P4CLI(object):
         if self.charset:
             cmd += ['-C', self.charset]
         return cmd
-    
+
     def run_login(self, *args):
         cmd = self._p4bin() + ['login']
         if '-s' in args:
@@ -416,12 +416,12 @@ class P4CLI(object):
 class UnixDaemon(object):
     """
     A generic daemon class.
-    
+
     Usage: subclass the Daemon class and override the run() method
-    
+
     Source:
     http://www.jejik.com/files/examples/daemon.py
-    
+
     Reference:
     http://www.jejik.com/articles/2007/02/a_simple_unix_linux_daemon_in_python/
     """
@@ -433,34 +433,34 @@ class UnixDaemon(object):
 
     def daemonize(self):
         """
-        Do the UNIX double-fork magic, see Stevens' "Advanced 
+        Do the UNIX double-fork magic, see Stevens' "Advanced
         Programming in the UNIX Environment" for details (ISBN 0201563177)
         http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
         """
-        try: 
+        try:
              pid = os.fork()
              if pid > 0:
                  # exit first parent
                  # sys.stderr.write('forked %d.\n' % pid)
                  sys.exit(0)
-        except OSError as e: 
+        except OSError as e:
             sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
             sys.exit(1)
-            
+
         # decouple from parent environment
-        os.chdir("/") 
-        os.setsid() 
-        os.umask(0) 
+        os.chdir("/")
+        os.setsid()
+        os.umask(0)
 
         # do second fork
-        try: 
-            pid = os.fork() 
+        try:
+            pid = os.fork()
             if pid > 0:
                 # exit from second parent
-                sys.exit(0) 
-        except OSError as e: 
+                sys.exit(0)
+        except OSError as e:
             sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
-            sys.exit(1) 
+            sys.exit(1)
 
         # redirect standard file descriptors
         sys.stdout.flush()
@@ -518,7 +518,7 @@ class UnixDaemon(object):
              sys.stderr.write(message % self.pidfile)
              return # not an error in a restart
 
-         # Try killing the daemon process	
+         # Try killing the daemon process
          try:
              while 1:
                  os.kill(pid, SIGTERM)
@@ -531,14 +531,14 @@ class UnixDaemon(object):
              else:
                  print(str(err))
                  sys.exit(1)
-                 
+
     def restart(self):
          """
          Restart the daemon
          """
          self.stop()
          self.start()
-         
+
     def run(self):
          """
          You should override this method when you subclass Daemon. It will be called after the process has been
@@ -549,7 +549,7 @@ class UnixDaemon(object):
 class P4ReviewDaemon(UnixDaemon):
     def __init__(self, cfg, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
         super(P4ReviewDaemon, self).__init__(cfg.pid_file, stdin=stdin, stdout=stdout, stderr=stderr)
-        
+
     def run(self):
         '''Run P4Review in a loop with a delay'''
         while 1:
@@ -582,26 +582,26 @@ class P4Review(object):
             if cfg.force and os.path.exists(cfg.pid_file):
                 log.info('Removing {} on request (-f)'.format(cfg.pid_file))
                 os.unlink(cfg.pid_file)
-                
+
             if cfg.force and not cfg.precached and os.path.exists(cfg.dbfile):
                 log.info('Removing {} on request (-f)'.format(cfg.dbfile))
                 os.unlink(cfg.dbfile)
-                
+
             if os.path.exists(cfg.pid_file):
                 log.error('Lock file ({}) exists! Bailing...'.format(cfg.pid_file))
                 sys.exit(1)
             with open(cfg.pid_file, 'w') as fd:
                 fd.write('{}\n'.format(os.getpid()))
-            
+
         self.cfg = cfg
         self.default_name, self.default_email = email.utils.parseaddr(cfg.default_sender)
-        
+
         p4 = P4()
         p4.prog = 'P4Review2'
         p4.port = cfg.p4port
         p4.user = cfg.p4user
         p4.connect()
-        
+
         logged_in = False
         try:
             rv = p4.run_login('-s')
@@ -612,10 +612,10 @@ class P4Review(object):
         if not logged_in and cfg.p4passwd:
             p4.password = str(cfg.p4passwd)
             p4.run_login()
-            
+
         if p4.run_info()[0].get('unicode') == 'enabled':
             p4.charset = str(self.cfg.p4charset)
-        
+
         self.p4 = p4            # keep a reference for future use
         db = sqlite3.connect(cfg.dbfile,
                              detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)
@@ -651,7 +651,7 @@ class P4Review(object):
             else:
                 rv[k] = d[k]
         return rv
-        
+
     def pull_data_from_p4(self):
         p4 = self.p4
         cux = self.db.cursor()
@@ -663,7 +663,7 @@ class P4Review(object):
                 return          # return early if no one is subscribed to notification
             for rv in reviewers:
                 self.subscribed[rv['user']] = True
-                
+
         if self.cfg.review_counter:
             review_counter = p4.run_counter(self.cfg.review_counter)[0]['value']
             if review_counter == '0' and not self.cfg.force:
@@ -675,7 +675,7 @@ class P4Review(object):
                 msg = '''Review counter ({}) is invalid. Run "p4 counter" to correct it.'''
                 self.bail(msg.format(self.cfg.review_counter))
             log.info('Review counter ({}): {}'.format(self.cfg.review_counter, review_counter))
-            
+
             log.info('Scraping for change review...')
             rv = p4.run_review(['-t', self.cfg.review_counter])
             log.debug('{} change(s)'.format(len(rv)))
@@ -691,7 +691,7 @@ class P4Review(object):
                 sql = '''INSERT OR IGNORE INTO usr (usr, name, email) values (?, ?, ?)'''
                 cux.execute(sql, (p4user, name, email))
 
-                
+
                 # who wants to get spammed?
                 rvwers = p4.run_reviews(['-c', chgno])
                 if rvwers:
@@ -706,7 +706,7 @@ class P4Review(object):
                         log.fatal(pformat(cl))
                         self.bail('kaboom!')
                     jobnames.update(cl.get('job', []))
-                    
+
                 for rvwer in rvwers:
                     usr   = self.unicode(rvwer.get('user'))
                     if self.cfg.opt_in_path: # and who doesn't want to be spammed?
@@ -722,7 +722,7 @@ class P4Review(object):
             for jobname in jobnames:
                 job = p4.run_job(['-o', jobname])[0]
                 cux.execute('''insert or ignore into job (job, pickle) values (?, ?)''', (jobname, dumps(self.trim_dict(job))))
-        
+
         if self.cfg.job_counter:
             log.info('Scraping for job reviews...')
             job_counter = p4.run_counter(self.cfg.job_counter)[0].get('value')
@@ -731,13 +731,13 @@ class P4Review(object):
             except Exception, e:
                 if self.cfg.force:
                     # Not sending notifications for jobs modified before 7 days ago
-                    dt = datetime.now() - timedelta(days=7) 
+                    dt = datetime.now() - timedelta(days=7)
                 else:
                     msg = '''Job review counter ({jc}) is unset or invalid ({val}). ''' \
                           '''Either re-run the script with -f option or run "p4 counter {jc} 'YYYY/mm/dd:HH:MM:SS' to set it.'''
                     self.bail(msg.format(jc=self.cfg.job_counter, val=job_counter))
             log.info('Job counter ({}): {}'.format(self.cfg.job_counter, job_counter))
-                
+
             args = '{dfield}>{yr}/{mo}/{day}:{hr}:{min}:{sec}'.format(dfield=self.cfg.job_datefield,
                                                                       yr=dt.year,
                                                                       mo=dt.month,
@@ -750,7 +750,7 @@ class P4Review(object):
             log.debug('{} job(s)'.format(len(jobs)))
             for job in jobs:
                 jobname = job.get('Job')
-                
+
                 specs = [
                     # '//depot/jobs', # this is what we use in the original review daemon, uncomment as needed (see job000032)
                     '//{}/jobs'.format(self.cfg.spec_depot),
@@ -762,7 +762,7 @@ class P4Review(object):
                     # TODO: add support for job "author" (requires custom jobspec)
                     sql = '''insert or ignore into job (job, pickle) values (?,?)'''
                     self.db.execute(sql, (jobname, dumps(self.trim_dict(job))))
-                    
+
                 for rvwer in rvwers: # email, name, user
                     usr = rvwer.get('user')
                     if cfg.opt_in_path and usr not in self.subscribed.keys():
@@ -773,8 +773,8 @@ class P4Review(object):
                     self.db.execute(sql, (usr, name, email))
                     sql = '''INSERT OR IGNORE INTO jbrvw (job, usr) VALUES (?,?)'''
                     self.db.execute(sql, (jobname, usr))
-                    
-                
+
+
         self.db.commit()
         log.info('{} change review(s).'.format(self.db.execute('''select count(*) from rvw''').fetchone()[0]))
         log.info('{} job review(s).'.format(self.db.execute('''select count(*) from jbrvw''').fetchone()[0]))
@@ -802,8 +802,8 @@ class P4Review(object):
         if len(subj) > 78: # RFC2822
             subj = subj[:75] + '...'
         cl['subject'] = subj.replace('\n', ' ')
-        
-        # jobs associated with this change...        
+
+        # jobs associated with this change...
         jobs = []
         for jobname in cl.get('job', []):
             if not jobname: continue
@@ -811,7 +811,7 @@ class P4Review(object):
             if rv:
                 jobs.append(rv[0])
         jobs.sort(key=lambda j: j['Job'], reverse=True)
-        
+
         # Text summary
         jobsupdated = '(none)'
         if jobs:
@@ -825,7 +825,7 @@ class P4Review(object):
             jobs = ujobs
             jobsupdated = [self.txtwrpr_indented.fill(jb_tmpl.format(**job).strip()) for job in jobs]
             jobsupdated = '\n\n'.join(jobsupdated)
-        
+
         clfiles_txt = '(none)'
         if clfiles:
             try:
@@ -833,7 +833,7 @@ class P4Review(object):
             except Exception as e:
                 log.error(e)
                 log.error(pformat(clfiles))
-        
+
         info = dict(
             chgno=chgno,
             p4port= self.cfg.p4port,
@@ -858,7 +858,7 @@ class P4Review(object):
                 info['clfiles'] = '{} files...'.format(len(clfiles))
                 txt_summary = self.cfg.change_template.format(**info)
             return cl.update(dict(text_summary=txt_summary, html_summary=None))
-        
+
         # HTML summary
         html_info = dict()
         for key in info.keys(): # escape before html tags are added
@@ -871,7 +871,7 @@ class P4Review(object):
                 html_info[key] = info[key]
 
         html_info['cldesc'] = cgi.escape(cl.get('desc').strip())
-        
+
         jobsupdated = '(none)'
         if jobs:
             jb_tmpl = u'<li><a style="text-decoration: none;" href="{job_url}">{Job}</a> *{Status}* {Description}</li>'
@@ -904,9 +904,9 @@ class P4Review(object):
 
         cl.update(dict(text_summary=txt_summary,
                        html_summary=html_summary))
-        
+
         return cl
-        
+
 
     def job_summary(self, jobname):
         '''Given jobname, returns a dictionary with a subject line,
@@ -932,7 +932,7 @@ class P4Review(object):
         if self.cfg.job_url:
             job_url = self.cfg.job_url.format(jobno=jobname)
         info['job_url'] = job_url
-        
+
         txt_summary, html_summary = [], []
         for key in job.keys():
             val = job.get(key).strip()
@@ -952,7 +952,7 @@ class P4Review(object):
         info['text_summary'] = self.cfg.job_template.format(jobdesc=txt_summary, **info)
         info['html_summary'] = self.cfg.html_job_template.format(jobdesc=html_summary, **info)
         return info
-        
+
     def send_one_email_per_change(self):
         log.debug('send_one_email_per_change()')
         def email_chg_review(rvw):
@@ -970,7 +970,7 @@ class P4Review(object):
             text   = chg['text_summary']
             html   = chg['html_summary']
             author = chg['user']
-            
+
             rv = self.db.execute('''select name, email from usr where usr = ?''', (author,)).fetchall()
             if rv:
                 aname, aemail = rv[0]
@@ -984,7 +984,7 @@ class P4Review(object):
                 unames.remove(unames[idx])
                 uemails.remove(uemails[idx])
             if not usrs:        # if the list is empty, return
-                return          
+                return
             toaddrs  = map(self.mkemailaddr, zip(usrs, unames, uemails))
 
             if html:
@@ -1041,13 +1041,13 @@ class P4Review(object):
                 len(chgrvws)+len(jbrvws), self.cfg.max_emails))
             self.cleanup()
             sys.exit(1)
-        
+
         for rvw in chgrvws:
             email_chg_review(rvw)
 
         for jbrvw in jbrvws:
             email_job_review(jbrvw)
-        
+
     def send_summary_emails(self):
         log.debug('send_summary_emails()')
         def email_summary(rvw):
@@ -1073,7 +1073,7 @@ class P4Review(object):
             html_summaries = [csum['html_summary'] for csum in chg_summaries] + \
                              [jsum['html_summary'] for jsum in job_summaries]
 
-            
+
             if not text_summaries: return # nothing to do!
 
             fromaddr = self.mkemailaddr((None, self.default_name, self.default_email))
@@ -1087,7 +1087,7 @@ class P4Review(object):
                 msg = MIMEText('\n\n'.join(text_summaries), 'plain', 'utf8')
             msg['Subject'] = '[{}] {} changes/jobs for review'.format(self.cfg.p4port, len(text_summaries))
             msg['From'] = fromaddr
-            # msg['Reply-To'] = 
+            # msg['Reply-To'] =
             msg['To'] = toaddr
             self.sendmail(fromaddr, ['<{}>'.format(uemail)], msg)
 
@@ -1095,7 +1095,7 @@ class P4Review(object):
         sql = u'''SELECT usr.usr, usr.name, usr.email, chgnos, jobs
         FROM rvws JOIN jbrvws ON rvws.usr=jbrvws.usr
         LEFT JOIN usr ON rvws.usr = usr.usr;'''
-        
+
         rows = self.db.execute(sql).fetchall()
         if len(rows) > self.cfg.max_emails:
             log.fatal('Will need to send {} emails, which exceed the limit of {}! Quitting.'.format(len(rows), self.cfg.max_emails))
@@ -1134,7 +1134,7 @@ class P4Review(object):
                 smtp.login(self.cfg.smtp_user, self.cfg.smtp_passwd)
             smtp.sendmail(fr, to, msg.as_string())
             smtp.quit()
-            
+
         self.mail_sent += 1
 
     def update_review_counters(self):
@@ -1149,7 +1149,7 @@ class P4Review(object):
             self.p4.run_counter(self.cfg.review_counter, reviewcounter)
         if self.cfg.job_counter:
             self.p4.run_counter(self.cfg.job_counter, self.started.strftime(self.dtfmt))
-    
+
     def cleanup(self):
         if self.p4.connected():
             self.p4.disconnect()
@@ -1158,21 +1158,21 @@ class P4Review(object):
         except Exception, e:
             for x in sys.exc_info():
                 log.fatal(x)
-            
+
         self.db.close()
         if not self.cfg.daemon and os.path.exists(self.cfg.pid_file):
             os.unlink(self.cfg.pid_file)
-    
+
     def bail(self, msg):
         log.fatal(msg)
         self.cleanup()
         sys.exit(1)
-    
+
     def unicode(self, bytestring, encoding='utf8', err='replace'):
         if type(bytestring) == type(u''):
             return bytestring
         return unicode(bytestring, encoding, err)
-    
+
     def trim_dict(self, d, only=None):
         '''Trim data stored in a dictionary according to self.cfg.max_length'''
         maxlen = self.cfg.max_length
@@ -1189,7 +1189,7 @@ class P4Review(object):
             elif type(val) == type([]):
                 newval = []
                 for i in xrange(len(val)):
-                    # append first, then check if we went over.                    
+                    # append first, then check if we went over.
                     newval.append(val[i])
                     if sum(map(lambda x: len(x), newval)) > maxlen:
                         newval.append('... (truncated)')
@@ -1206,7 +1206,7 @@ class P4Review(object):
             self.pull_data_from_p4()
             dt1 = datetime.now()
             log.debug('... took {} pulling data from Perforce'.format(dt1 - dt0))
-        dt1 = datetime.now()            
+        dt1 = datetime.now()
 
         if self.cfg.summary_email:
             self.send_summary_emails()
@@ -1228,7 +1228,7 @@ def print_cfg(cfg):
     for key in keys:
         conf.set(CFG_SECTION_NAME, key, str(cfg.__getattribute__(key)))
     conf.write(sys.stdout)
-    
+
 if __name__ == '__main__':
     cfg = parse_args()
     # NOTE: need to call log.basicCofnig() before we can use the
@@ -1265,7 +1265,7 @@ if __name__ == '__main__':
         if S_IRGRP&m or S_IWGRP&m or S_IROTH&m or S_IWOTH&m:
             log.fatal('You are storing plain text password(s) in the config file with insecure permission. Fix it!')
             sys.exit(1)
-    
+
     try:
         from P4 import P4
     except ImportError, e:
