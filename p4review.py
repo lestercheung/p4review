@@ -648,7 +648,7 @@ if __name__ == '__main__':
   p4log = logging.getLogger(__name__)
 
   # Define a Handler which writes all messages to a rotating log file.
-  p4reviewlog = logging.handlers.RotatingFileHandlerr()
+  p4reviewlog = logging.handlers.RotatingFileHandler()
   p4reviewlog.setLevel(logging.INFO)
   # set a format which is simpler for p4reviewlog use
   formatter = logging.Formatter('%(levelname)-8s: %(message)s')
