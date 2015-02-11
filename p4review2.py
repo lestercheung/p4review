@@ -62,8 +62,6 @@ FEATURES
 Nice to haves (TODOs)
 -----------------------
 
-* Include P4Web link for diffs.
-
 * Respect protection table (for older P4D versions). See:
   http://public.perforce.com/guest/lester_cheung/p4review/p4review.py
   for a previous attempt.
@@ -75,7 +73,9 @@ Nice to haves (TODOs)
   [todo]. The later is not recorded in the job spec by default so it
   must be a configruable...
 
-* run as a standalone daemon (UNIX and Windows). See this recipe for
+* Also skip email notification for service/operator users.
+
+* Run as a standalone daemon (UNIX and Windows). See this recipe for
   an implementation on Windows:
 
   http://code.activestate.com/recipes/576451-how-to-create-a-windows-service-in-python/
@@ -88,9 +88,9 @@ User contributed content on the Perforce Public Depot is not supported
 by Perforce, although it may be supported by its author. This applies
 to all contributions even those submitted by Perforce employees.
 
-If you have any comments or need any help with the content of this
-particular folder, please contact support@perforce.com, and I will try
-to help.
+If you have any comments or need any help with the content of
+this particular folder, please contact
+https://twitter.com/p4lester
 
 '''
 
@@ -104,20 +104,31 @@ import logging as log
 import marshal
 import os, sys
 import re
+import shlex
 import smtplib
 import sqlite3
 import time
 import traceback
+
+## Yucky bits to handle Python2 and Python3 differences
+PY2 = sys.version_info[0] == 2  # sys.version_info.major won't work until 2.7 :(
+PY3 = sys.version_info[0] == 3
+
+if PY2:
+    from StringIO import StringIO
+elif PY3:
+    from io import StringIO
 
 from cPickle import loads, dumps
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from getpass import getuser     # works under UNIX & Windows!
+from io import BytesIO
 from operator import itemgetter
 from pprint import pprint, pformat
 from signal import SIGTERM
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE, check_output
 from textwrap import TextWrapper
 
 ## FIXME: DEBUG LEVELS (make it a configurable?)
@@ -127,7 +138,7 @@ from textwrap import TextWrapper
 # 30 WARN, WARNING
 # 40 ERROR
 # 50 CRITICAL, FATAL
-DEBUGLVL = log.INFO
+DEBUGLVL = log.DEBUG
 CFG_SECTION_NAME = 'p4review'
 
 # Instead of changing these, store your preferences in a config file.
@@ -141,6 +152,7 @@ DEFAULTS = dict(
     opt_in_path    = '',
     daemon         = '',
     poll_interval  = 300,
+
     # Perforce
     p4bin          = '/usr/local/bin/p4',
     p4port         = os.environ.get('P4PORT', '1666'),
@@ -152,6 +164,7 @@ DEFAULTS = dict(
     job_datefield  = 'Date',
     spec_depot     = 'spec',
     timeoffset     = 0.0,       # in hours
+    ignored_users  = ['git-fusion-reviews-*'],
 
     # Email
     smtp_server    = 'smtp:25',
@@ -160,7 +173,7 @@ DEFAULTS = dict(
     smtp_passwd    = '',        # optional
     summary_email  = False,
     skip_author    = True,
-    max_email_size = 1024**2,   # Up to ~30MB
+    max_email_size = 1024**2,   # up to ~30MB for exchange servers
     max_emails     = 99,        # start small - people can choose to increase this
     max_length     = 2**12,
     default_sender = 'Perforce Review Daemon <perforce-review-daemon>', # Now we can claim to be a daemon! without guilt!
@@ -212,6 +225,7 @@ Affected files:
 </dl>''',
 )
 
+
 def true_or_false(x):
     if x in 'FALSE OFF DISABLED DISABLE 0'.split():
         return False
@@ -243,6 +257,9 @@ def parse_args():
             if key in cfg:
                 cfg[key] = int(cfg.get(key)) # NOTE: float values cannot be used in list
                                              #       slicing notations!
+
+        # Convert the string value back into an array
+        cfg['ignored_users'] = map(lambda x: x.strip(), cfg['ignored_users'].split(','))
 
         for k in defaults:
             if k in cfg:
@@ -295,6 +312,8 @@ def parse_args():
                     help='used to handle non-unicode server with non-ascii chars')
     p4.add_argument('-o', '--opt-in-path', # metavar=defaults.get('opt_in_path'),
                     help='''depot path to include in the "Review" field of user spec to opt-in review emails''')
+    p4.add_argument('-i', '--ignored-users', action='append',
+                    help='never send any email notification to the following users')
 
     m = ap.add_argument_group('email')
     m.add_argument('--smtp', metavar=defaults.get('smtp_server'), help='SMTP server in host:port format. See smtp_ssl in config for SSL options.')
@@ -312,7 +331,8 @@ def parse_args():
     m.add_argument('--subject-template', metavar="'{}'".format(defaults.get('subject_template')), help='customize subject line in one-email-per-change-mode')
 
     args = ap.parse_args(remaining_argv)
-    if 'cfgp' in locals().keys(): # we have a config parser
+    if 'cfgp' in locals().keys():
+        # we have a config parser defined, meaning we are reading from a config file
         args.config_file = args0.config_file
         if set(DEFAULTS.keys()) != set(cfgp.options(CFG_SECTION_NAME)) and not args.sample_config:
             log.fatal('There are changes in the configuration, please run "{} --sample-config -c <confile>" to generate a new one!'.format(sys.argv[0]))
@@ -326,21 +346,37 @@ class P4CLI(object):
     CLI... just enough to support p4review2.py.
 
     '''
-    charset = ''
-    array_key_regex = re.compile(r'^(\D*)(\d*)$')
+    charset         = None      # P4CHARSET
+    encoding        = 'utf8'    # default encoding
+    input           = None      # command input
+    array_key_regex = re.compile(r'^(\D*)(\d*)$') # depotFile0, depotFile1...
+    tempfiles       = []
 
-    def __setattr__(self, name, val):
-        if name in 'port prog client charset user password'.split():
-            object.__setattr__(self, name, val)
+    def __init__(self):
+        self.user = self.env('P4USER')
+        self.port = self.env('P4PORT')
+        self.client = self.env('P4CLIENT')
+        if self.env('P4CHARSET') == 'none':
+            self.charset = None # you *can* have "P4CHARSET=none" in your config...
+
+    def __repr__(self):
+        return '<P4CLI({u}@{c} on {p})>'.format(u=self.user, c=self.client, p=self.port)
+
+    def __del__(self):
+        '''cleanup '''
+        for f in self.tempfiles:
+            os.unlink(f)
 
     def __getattr__(self, name):
-        if name.startswith('run_'):
-            p4cmd = name[4:]
+        if name.startswith('run'):
+            p4cmd = None
+            if name.startswith('run_'):
+                p4cmd = name[4:]
 
-            def p4runproxy(*args): # stubs for undefined run_*() functions
-                cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, p4cmd]
-                if self.charset:
-                    cmd = [self.p4bin, '-G', '-p', self.port, '-u', self.user, '-C', self.charset, p4cmd]
+            def p4runproxy(*args): # stubs for run_*() functions
+                cmd = self.p4pipe
+                if p4cmd:       # command is in the argument for calls to run()
+                    cmd += [p4cmd]
                 if type(args)==tuple or type(args)==list:
                     for arg in args:
                         if type(arg) == list:
@@ -349,8 +385,18 @@ class P4CLI(object):
                             cmd.append(arg)
                 else:
                     cmd += [args]
-                cmd = map(str, cmd)
-                p = Popen(cmd, stdout=PIPE)
+                cmd = list(map(str, cmd))
+
+                if self.input:
+                    tmpfd, tmpfname = tempfile.mkstemp()
+                    self.tempfiles.append(tmpfname)
+                    fd = open(tmpfname, 'rb+')
+                    m = marshal.dump(self.input, fd, 0)
+                    fd.seek(0)
+                    p = Popen(cmd, stdin=fd, stdout=PIPE)
+                else:
+                    p = Popen(cmd, stdout=PIPE)
+
 
                 rv = []
                 while 1:
@@ -358,48 +404,59 @@ class P4CLI(object):
                         rv.append(marshal.load(p.stdout))
                     except EOFError:
                         break
-                    except Exception as e:
-                        log.error('{} {}'.format(type(e), e))
+                    except Exception:
+                        log.error('Unknown error while demarshaling data from server.')
+                        log.error(' '.join(cmd))
                         break
+                p.stdout.close()
+                # log.debug(pformat(rv)) # raw data b4 decoding
+                self.input = None # clear any inputs after each p4 command
 
-                # magic to turn fieldNNN into a list in field
-                for r in rv:
-                    fields_needing_cleanup = set()
-                    for key in r.keys():
-                        k, num = self.array_key_regex.match(key).groups()
-                        if not num:
-                            continue
-                        r[k] = r.get(k, [])
-                        r[k].append((key, r[key]))
-                        fields_needing_cleanup.add(k)
-                    for k in fields_needing_cleanup:
-                        r[k].sort(key=lambda x: x[0])
-                        r[k] = [ val[1] for val in r[k]]
+                rv2 = []        # actual array that we will return
+                # magic to turn 'fieldNNN' into an array with key 'field'
+                for r in rv:    # rv is a list if dictionaries
+                    r2 = {}
+                    fields_needing_sorting = set()
+                    for key in r:
+                        decoded_key = key
+                        if PY3 and type(decoded_key) == bytes:
+                            decoded_key = decoded_key.decode(self.encoding)
+                        val = r[key]
+                        if PY3 and type(val) == bytes:
+                            val = val.decode(self.charset or self.encoding or 'utf8')
+                        k, num = self.array_key_regex.match(decoded_key).groups()
 
-                return rv
+                        if num: # key in 'filedNNN' form.
+                            v = r2.get(k, [])
+                            if type(v) == str:
+                                v = [v]
+                            v.append(val)
+                            r2[k] = v
+                        else:
+                            r2[k] = val
+                    rv2.append(r2)
+                # log.debug(pformat(rv2)) # data after decoding
+                return rv2
             return p4runproxy
         elif name in 'connect disconnect'.split():
-            def noop():
-                pass    # returns None
-            return noop
+            return self.noop
+        elif name in 'p4pipe'.split():
+            cmd = [self.p4bin] + \
+                  shlex.split('-G -p "'+self.port+'" -u '+self.user+' -c '+self.client)
+            if self.charset:
+                cmd += ['-C', self.charset]
+            return cmd
         else:
-            log.error(name)
-            raise AttributeError
+            raise AttributeError("'P4CLI' object has no attribute '{}'".format(name))
 
     def identify(self):
-        return 'P4CLI, using {}.'.format(self.p4bin)
+        return 'P4CLI, using '+self.p4bin
 
     def connected(self):
         return True
 
-    def _p4bin(self):
-        cmd = [self.p4bin] + '-G -p {} -u {} '.format(self.port, self.user).split()
-        if self.charset:
-            cmd += ['-C', self.charset]
-        return cmd
-
     def run_login(self, *args):
-        cmd = self._p4bin() + ['login']
+        cmd = self.p4pipe + ['login']
         if '-s' in args:
             cmd += ['-s']
             proc = Popen(cmd, stdout=PIPE)
@@ -411,6 +468,42 @@ class P4CLI(object):
             out = proc.communicate(input=self.password)[0]
             out = '\n'.join(out.splitlines()[1:]) # Skip the password prompt...
         return [marshal.loads(out)]
+
+    def env(self, key):
+        rv = check_output([self.p4bin, 'set', key]).decode('utf8')
+        rv = rv.split(' (config)')[0]
+        rv = rv.split(' (set)')[0]
+        rv = rv.split('=', 1)   # don't use the keyword "maxsplit" as it will bring in Python2
+        if len(rv) != 2:
+            rv = None
+        else:
+            rv = rv[1]
+
+        if not rv:
+            if key == 'P4USER':
+                from getpass import getuser
+                rv = getuser()
+            elif key == 'P4CLIENT':
+                from socket import gethostname
+                rv = gethostname()
+            elif key == 'P4PORT':
+                rv = 'perforce:1666'
+        return rv
+
+    def noop(*args, **kws):
+        pass    # stub - it's a class method which returns None.
+
+    def run_plaintext(self, *args):
+        '''Run P4 commands normally and return the outputs in plaintext'''
+        cmd = shlex.split('''{bin} -p "{p4port}" -u {p4user} -c {p4client}'''.format(
+            bin=self.p4bin,
+            p4port=self.port,
+            p4user=self.user,
+            p4client=self.client)) + list(args)
+        rv = check_output(cmd)
+        if PY3 and type(rv) == bytes:
+            rv = rv.decode(self.charset or self.encoding or 'utf8')
+        return rv
 
 
 class UnixDaemon(object):
@@ -606,7 +699,7 @@ class P4Review(object):
         try:
             rv = p4.run_login('-s')
             logged_in = True
-        except Exception, e:
+        except Exception as e:
             pass
         log.debug('logged in: '+ str(logged_in))
         if not logged_in and cfg.p4passwd:
@@ -701,7 +794,7 @@ class P4Review(object):
                     try:
                         cux.execute(sql, (chgno, dumps(
                             self.trim_dict(cl, 'chageType client user time change desc depotFile action rev job'.split()))))
-                    except Exception, e:
+                    except Exception as e:
                         log.fatal(pformat(e))
                         log.fatal(pformat(cl))
                         self.bail('kaboom!')
@@ -709,6 +802,8 @@ class P4Review(object):
 
                 for rvwer in rvwers:
                     usr   = self.unicode(rvwer.get('user'))
+                    if self.ignored(usr):
+                        continue
                     if self.cfg.opt_in_path: # and who doesn't want to be spammed?
                         if usr not in self.subscribed.keys():
                             continue
@@ -728,7 +823,7 @@ class P4Review(object):
             job_counter = p4.run_counter(self.cfg.job_counter)[0].get('value')
             try:
                 dt = datetime.strptime(job_counter, self.dtfmt)
-            except Exception, e:
+            except Exception as e:
                 if self.cfg.force:
                     # Not sending notifications for jobs modified before 7 days ago
                     dt = datetime.now() - timedelta(days=7)
@@ -1155,7 +1250,7 @@ class P4Review(object):
             self.p4.disconnect()
         try:
             self.db.commit()        # just in case
-        except Exception, e:
+        except Exception as e:
             for x in sys.exc_info():
                 log.fatal(x)
 
@@ -1198,6 +1293,13 @@ class P4Review(object):
             newdic[k] = val
         return newdic
 
+    def ignored(self, user):
+        '''Checks if a user should be excluded for email notification.'''
+        for regex in self.cfg.ignored_users:
+            if re.search(regex, user):
+                return True
+        return False
+
     ## helpers ends ########################################################
 
     def run(self):
@@ -1221,12 +1323,18 @@ class P4Review(object):
     ## Class P4Review ends here
 
 def print_cfg(cfg):
+    print(';; See --help for details...')
     conf = ConfigParser.SafeConfigParser()
     conf.add_section(CFG_SECTION_NAME)
     keys = DEFAULTS.keys()
     keys.sort()
     for key in keys:
-        conf.set(CFG_SECTION_NAME, key, str(cfg.__getattribute__(key)))
+        val = cfg.__getattribute__(key)
+        if type(val) == type([]):
+            val = ','.join(val)
+        else:
+            val = str(val)
+        conf.set(CFG_SECTION_NAME, key, val)
     conf.write(sys.stdout)
 
 if __name__ == '__main__':
@@ -1254,8 +1362,8 @@ if __name__ == '__main__':
                                                                  sys.version_info.releaselevel,
                                                                  sys.version_info.serial
                                                              ))
+    log.debug(cfg)
     if cfg.sample_config:
-        print(';; See --help for details...')
         print_cfg(cfg)
         sys.exit()
 
@@ -1268,8 +1376,8 @@ if __name__ == '__main__':
 
     try:
         from P4 import P4
-    except ImportError, e:
-        log.warn('Using P4 CLI. Considering install P4Python for better performance. '
+    except ImportError as e:
+        log.warn('Using P4 CLI. Consider installing P4Python for better performance.'
                  'See http://www.perforce.com/perforce/doc.current/manuals/p4script/03_python.html')
         P4 = P4CLI
         P4.p4bin = cfg.p4bin    # so all instances of P4 knows where to find the P4 binary...
@@ -1283,7 +1391,7 @@ if __name__ == '__main__':
         app = P4Review(cfg)
         try:
             rv = app.run()
-        except Exception, e:
+        except Exception as e:
             typ, val, tb = sys.exc_info()
             log.fatal(typ)
             log.fatal(val)
