@@ -56,14 +56,16 @@ FEATURES
 
 * SMTP auth and TLS (not SSL) support.
 
-* Handles P4 auth (optional, not recommend!).
+* Handles P4 auth (optional, not recommended!).
 
 
 Nice to haves (TODOs)
 -----------------------
 
+* Python3 support
+
 * Respect protection table (for older P4D versions). See:
-  http://public.perforce.com/guest/lester_cheung/p4review/p4review.py
+  http://swarm.workshop.perforce.com/guest/lester_cheung/p4review/p4review.py
   for a previous attempt.
 
 * Supports hooks from the changelist description to notify additional
@@ -75,7 +77,7 @@ Nice to haves (TODOs)
 
 * Also skip email notification for service/operator users.
 
-* Run as a standalone daemon (UNIX and Windows). See this recipe for
+* Run as a standalone daemon (UNIX [done] and Windows). See this recipe for
   an implementation on Windows:
 
   http://code.activestate.com/recipes/576451-how-to-create-a-windows-service-in-python/
