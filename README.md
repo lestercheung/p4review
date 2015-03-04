@@ -71,7 +71,7 @@ Here is how to setup P4Review2 in 3 simple steps:
 
 2. Test the configuration with:
 
-        python p4review2.py -c p4review2.conf -P</code>
+        python p4review2.py -c p4review2.conf -P
 
 3. When ready, create a crontab (Linux/UNIX)/scheduled task (Windows)
    to run the above command without the -P option. When used with
