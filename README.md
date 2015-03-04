@@ -53,7 +53,7 @@ Here is how to setup P4Review2 in 3 simple steps:
 
 1. Create a configuration file using the defaults:
 
-        python p4review2.py --sample-config &gt; p4review2.conf
+        python p4review2.py --sample-config > p4review2.conf
 
    The file is in INI-like format. Edit the file to match your environment.
    In particular, check settings for the following:
