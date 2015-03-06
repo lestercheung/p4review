@@ -243,13 +243,9 @@ def parse_args():
     args0, remaining_argv = confp.parse_known_args()
 
     if args0.config_file:
-        cfgp = ConfigParser.SafeConfigParser()
+        cfgp = ConfigParser.SafeConfigParser(allow_no_value=True)
         cfgp.read([args0.config_file])
         cfg = dict([[unicode(y, 'utf8', 'replace') for y in x] for x in cfgp.items(CFG_SECTION_NAME)])
-
-        for key in cfg.keys():
-            if not cfg[key]:
-                cfg.pop(key)    # remove empty fields
 
         # now this is annoying - have to convert int(?) and bool types manually...
         for key in 'sample_config summary_email debug_email precached skip_author'.split():
@@ -954,7 +950,8 @@ class P4Review(object):
                 info['jobsupdated'] = '{} jobs...'.format(len(jobs))
                 info['clfiles'] = '{} files...'.format(len(clfiles))
                 txt_summary = self.cfg.change_template.format(**info)
-            return cl.update(dict(text_summary=txt_summary, html_summary=None))
+            cl.update(dict(text_summary=txt_summary, html_summary=None))
+            return cl
 
         # HTML summary
         html_info = dict()
