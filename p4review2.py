@@ -422,7 +422,10 @@ class P4CLI(object):
                         val = r[key]
                         if PY3 and type(val) == bytes:
                             val = val.decode(self.charset or self.encoding or 'utf8')
-                        k, num = self.array_key_regex.match(decoded_key).groups()
+                        regexmatch = self.array_key_regex.match(decoded_key)
+                        if not regexmatch: # re.match may return None
+                            continue
+                        k, num = regexmatch.groups()
 
                         if num: # key in 'filedNNN' form.
                             v = r2.get(k, [])
