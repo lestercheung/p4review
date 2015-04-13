@@ -1369,7 +1369,7 @@ if __name__ == '__main__':
         print_cfg(cfg)
         sys.exit()
 
-    if cfg.p4passwd or cfg.smtp_passwd:
+    if cfg.config_file and (cfg.p4passwd or cfg.smtp_passwd):
         m = os.stat(cfg.config_file).st_mode
         from stat import *
         if S_IRGRP&m or S_IWGRP&m or S_IROTH&m or S_IWOTH&m:
