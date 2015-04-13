@@ -1373,8 +1373,7 @@ if __name__ == '__main__':
         m = os.stat(cfg.config_file).st_mode
         from stat import *
         if S_IRGRP&m or S_IWGRP&m or S_IROTH&m or S_IWOTH&m:
-            log.fatal('You are storing plain text password(s) in the config file with insecure permission. Fix it!')
-            sys.exit(1)
+            log.warn('You are storing plain text password(s) in the config file with insecure permission. Fix it!')
 
     try:
         from P4 import P4
