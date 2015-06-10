@@ -1,4 +1,4 @@
-# Introcuction #
+# Introduction #
 
 A review notification script/daemon is a program that sends out (email) notification when files/jobs are submitted to a Perforce server.
 
@@ -15,7 +15,7 @@ requirement the result is usually a highly customized solution that only works f
 
 Because of that,[P4Review2](http://public.perforce.com/wiki/P4Review2)
 was written with customization in mind - instead of modifying the script directly
-you can achieve most task by supplying a configuration isntead.
+you can achieve most task by supplying a configuration instead.
 
 
 # Features #
