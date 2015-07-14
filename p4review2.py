@@ -96,7 +96,6 @@ https://twitter.com/p4lester
 
 '''
 
-import ConfigParser
 import argparse
 import atexit
 import cgi
@@ -117,11 +116,14 @@ PY2 = sys.version_info[0] == 2  # sys.version_info.major won't work until 2.7 :(
 PY3 = sys.version_info[0] == 3
 
 if PY2:
+    import ConfigParser
     from StringIO import StringIO
+    from cPickle import loads, dumps
 elif PY3:
     from io import StringIO
+    import configparser as ConfigParser
+    from pickle import loads, dumps
 
-from cPickle import loads, dumps
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
