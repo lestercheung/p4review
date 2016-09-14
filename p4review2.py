@@ -274,7 +274,7 @@ def parse_args():
     ap = argparse.ArgumentParser(
         description='Perforce review daemon, take 2.',
         parents=[confp],        # inherit options
-        epilog='''Please send questions and comments to support@perforce.com. Share and enjoy!''')
+        epilog='''Please send questions and comments via http://about.me/lestercheung. Share and enjoy!''')
 
     ap.set_defaults(**defaults)
 
