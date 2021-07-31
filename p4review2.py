@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 '''$Id$
@@ -116,13 +116,16 @@ PY2 = sys.version_info[0] == 2  # sys.version_info.major won't work until 2.7 :(
 PY3 = sys.version_info[0] == 3
 
 if PY2:
-    import ConfigParser
+    from ConfigParser import SafeConfigParser as ConfigParser
     from StringIO import StringIO
+    from cgi import escape as html_escape
     from cPickle import loads, dumps
 elif PY3:
     from io import StringIO
-    import configparser as ConfigParser
+    from configparser import ConfigParser
+    from html import escape as html_escape
     from pickle import loads, dumps
+    unicode = lambda *x: x[0]
 
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -245,7 +248,7 @@ def parse_args():
     args0, remaining_argv = confp.parse_known_args()
 
     if args0.config_file:
-        cfgp = ConfigParser.SafeConfigParser(allow_no_value=True)
+        cfgp = ConfigParser(allow_no_value=True)
         cfgp.read([args0.config_file])
         cfg = dict([[unicode(y, 'utf8', 'replace') for y in x] for x in cfgp.items(CFG_SECTION_NAME)])
 
@@ -963,13 +966,13 @@ class P4Review(object):
         for key in info.keys(): # escape before html tags are added
             val = info[key]
             if type(val) == str or type(val) == unicode:
-                html_info[key] = cgi.escape(val)
+                html_info[key] = html_escape(val)
             elif type(val) == list:
-                html_info[key] = [cgi.escape(v) for v in val]
+                html_info[key] = [html_escape(v) for v in val]
             else:
                 html_info[key] = info[key]
 
-        html_info['cldesc'] = cgi.escape(cl.get('desc').strip())
+        html_info['cldesc'] = html_escape(cl.get('desc').strip())
 
         jobsupdated = '(none)'
         if jobs:
@@ -982,7 +985,7 @@ class P4Review(object):
             self.cfg.html_files_template.format(
                 change_url=info['change_url'],
                 fhash=hashlib.md5(dfile.encode('utf8')).hexdigest(),
-                dfile=cgi.escape(dfile),
+                dfile=html_escape(dfile),
                 drev=drev,
                 action=action
             )
@@ -1042,8 +1045,9 @@ class P4Review(object):
                 '{}:'.format(key),
                 self.txtwrpr_indented.fill(val)
             ]))
-            html_summary.append(u'''<dt>{}</dt><dd>{}</dd>'''.format(cgi.escape(key),
-                                                                    cgi.escape(val)))
+            html_summary.append(
+                u'''<dt>{}</dt><dd>{}</dd>'''.format(html_escape(key),
+                                                     html_escape(val)))
         txt_summary = [self.unicode(x, encoding=self.cfg.p4charset) for x in txt_summary]
         txt_summary = u'\n\n'.join(txt_summary)
         html_summary = u'\n'.join(map(lambda x: self.unicode(x, self.cfg.p4charset), html_summary))
@@ -1287,7 +1291,7 @@ class P4Review(object):
                     val = val[:maxlen] + '...\n(truncated after {} characters)'.format(maxlen)
             elif type(val) == type([]):
                 newval = []
-                for i in xrange(len(val)):
+                for i in range(len(val)):
                     # append first, then check if we went over.
                     newval.append(val[i])
                     if sum(map(lambda x: len(x), newval)) > maxlen:
@@ -1328,10 +1332,9 @@ class P4Review(object):
 
 def print_cfg(cfg):
     print(';; See --help for details...')
-    conf = ConfigParser.SafeConfigParser()
+    conf = ConfigParser()
     conf.add_section(CFG_SECTION_NAME)
     keys = DEFAULTS.keys()
-    keys.sort()
     for key in keys:
         val = cfg.__getattribute__(key)
         if type(val) == type([]):
