@@ -248,6 +248,9 @@ def parse_args():
     args0, remaining_argv = confp.parse_known_args()
 
     if args0.config_file:
+        if not os.path.exists(args0.config_file):
+            log.fatal('{0} does not exists! See --sample-config.'.format(args0.config_file))
+            sys.exit(1)
         cfgp = ConfigParser(allow_no_value=True)
         cfgp.read([args0.config_file])
         cfg = dict([[unicode(y, 'utf8', 'replace') for y in x] for x in cfgp.items(CFG_SECTION_NAME)])
