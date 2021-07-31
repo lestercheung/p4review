@@ -101,7 +101,8 @@ import atexit
 import cgi
 import email
 import hashlib
-import logging as log
+import logging
+log = logging
 import marshal
 import os, sys
 import re
@@ -154,6 +155,7 @@ CFG_SECTION_NAME = "p4review"
 DEFAULTS = dict(
     # General
     log_file       = '',        # optional, but recommended
+    debug_level    = 'DEBUG',
     pid_file       = os.path.join(os.path.realpath('.'), 'p4review2.pid'),
     dbfile         = ':memory:', # an (temporary) SQLite db used to
                                  # store review info from Perforce
@@ -184,7 +186,7 @@ DEFAULTS = dict(
     max_email_size = 1024**2,   # up to ~30MB for exchange servers
     max_emails     = 99,        # start small - people can choose to increase this
     max_length     = 2**12,
-    default_sender = 'Perforce Review Daemon <perforce-review-daemon>', # Now we can claim to be a daemon! without guilt!
+    default_sender = 'Perforce Review Daemon <perforce-review-daemon>', # Now we can claim to be a daemon without guilt!
     default_domain = 'example.org',
     change_url     = 'http://p4web:1680/{chgno}?ac=10',
     job_url        = 'http://p4web:1680/{jobno}?ac=111',
@@ -279,7 +281,7 @@ def parse_args():
                 #       slicing notations!
 
         # Convert the string value back into an array
-        cfg["ignored_users"] = map(lambda x: x.strip(), cfg["ignored_users"].split(","))
+        cfg["ignored_users"] = [x.strip() for x in cfg["ignored_users"].split(",")] 
 
         for k in defaults:
             if k in cfg:
@@ -336,6 +338,13 @@ def parse_args():
     ap.add_argument("--daemon-poll-delay", type=float, help="seconds between each poll")
 
     debug = ap.add_argument_group("debug")
+    _ = "DEBUG/INFO/WARN/ERROR/FATAL"
+    debug.add_argument(
+        "--debug-level",
+        choices=_.split('/'),
+        metavar=defaults.get('debug_level'),
+        help=_,
+    )
     debug.add_argument(
         "-D",
         "--dbfile",
@@ -554,7 +563,7 @@ class P4CLI(object):
                             cmd.append(arg)
                 else:
                     cmd += [args]
-                cmd = list(map(str, cmd))
+                cmd = [str(x) for x in cmd]
 
                 if self.input:
                     tmpfd, tmpfname = tempfile.mkstemp()
@@ -1624,6 +1633,18 @@ def print_cfg(cfg):
     conf.write(sys.stdout)
 
 
+def get_logging_level(lvlstr='DEBUG'):
+    lvl = dict(
+        DEBUG=logging.DEBUG,
+        INFO=logging.INFO,
+        WARN=logging.WARN,
+        ERROR=logging.ERROR,
+        FATAL=logging.FATAL,
+    )
+
+    return lvl.get(lvlstr, logging.DEBUG)
+
+
 if __name__ == "__main__":
     cfg = parse_args()
     # NOTE: need to call log.basicCofnig() before we can use the
@@ -1631,14 +1652,14 @@ if __name__ == "__main__":
     if cfg.log_file:
         log.basicConfig(
             filename=cfg.log_file,
-            level=DEBUGLVL,
+            level=get_logging_level(cfg.debug_level),
             format="%(asctime)s %(levelname)-8s %(message)s",
             datefmt="%Y-%m-%d %H:%M",
         )
     else:
         log.basicConfig(
             stream=sys.stderr,
-            level=DEBUGLVL,
+            level=get_logging_level(cfg.debug_level),
             format="%(asctime)s %(levelname)-8s %(message)s",
             datefmt="%Y-%m-%d %H:%M",
         )
