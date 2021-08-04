@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""$Id$
-$Change$
-$DateTime$
-$Author$
+"""$Id: //guest/lester_cheung/p4review/p4review2.py#42 $
+$Change: 27935 $
+$DateTime: 2021/08/02 10:58:50 $
+$Author: lester_cheung $
 
 This is/will be a complete rewrite of the original Perforce review
 daemon.
@@ -403,7 +403,7 @@ def parse_args():
         "-O",
         "--timeoffset",
         type=float,
-        help="time offsfet (in hours) between Perforce server and server running this script",
+        help="time offset (in hours) between Perforce server and server running this script",
     )
     p4.add_argument(
         "-C",
@@ -459,7 +459,7 @@ def parse_args():
         "--max-length",
         type=int,
         metavar=defaults.get("max_length"),
-        help="limit length of data in diffent places",
+        help="limit length of data in different places",
     )
     m.add_argument(
         "-m",
@@ -519,7 +519,7 @@ def parse_args():
 
 
 class P4CLI(object):
-    """Poor mans's implimentation of P4Python using P4
+    """Poor mans's implementation of P4Python using P4
     CLI... just enough to support p4review2.py.
 
     """
@@ -939,7 +939,7 @@ class P4Review(object):
         log.info("App (pid={}) initiated.".format(os.getpid()))
 
     def convert_spec(self, s):
-        """Convert a pickled server specificiation to a dictionary with unicode values."""
+        """Convert a pickled server specification to a dictionary with unicode values."""
         d = loads(s)
         rv = {}
         for k in d:
@@ -1253,7 +1253,7 @@ class P4Review(object):
             html_summary = self.cfg.html_change_template.format(**info)
 
         if len(txt_summary) + len(html_summary) > self.cfg.max_email_size:
-            msg = 'Change summary for @{} exceed {} bytes after triming. Try lowering "max_length".'
+            msg = 'Change summary for @{} exceed {} bytes after trimming. Try lowering "max_length".'
             log.warn(msg.format(chgno, self.cfg.max_email_size))
 
         cl.update(dict(text_summary=txt_summary, html_summary=html_summary))
@@ -1268,7 +1268,7 @@ class P4Review(object):
         rv = self.db.execute(
             "select pickle from job where job = ?", (jobname,)
         ).fetchone()
-        assert rv  # should be true unless server has consistancy problems...
+        assert rv  # should be true unless server has consistency problems...
         job = rv[0]
         # add option "jobreview_subject_template"?
         subj = u"[{} {}] {}".format(
